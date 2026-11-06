@@ -20,7 +20,8 @@ The rule while anything is 🔜: **you can still do it with git**, because `grov
 | Branches: unmerged git branches import as lanes; lanes export and push as branches, keeping commit ids | ✅ |
 | Side branches of merge commits on import | their result is kept in the merge's tree; the separate commits are flattened, as `git log --first-parent` shows them |
 | Pull requests: open one from a Grove change | ✅ `grove git pr <url>` (opens it on GitHub with `gh`) |
-| Git LFS and submodules | 🔜 kept as ordinary files today |
+| Executables, symlinks, submodules | ✅ kept in `.grovemodes`; commits keep their ids |
+| Git LFS | ✅ pointer files kept as git stores them (Grove doesn't fetch LFS contents) |
 
 ## Main porcelain
 
@@ -51,7 +52,7 @@ The rule while anything is 🔜: **you can still do it with git**, because `grov
 | `bisect` | `grove bisect --run <cmd> [--good <at>]` | ✅ |
 | `range-diff` | `grove evolve <change>` (every version of a change) | ✅ |
 | `notes` | `grove note <change> "text"` | ✅ |
-| `submodule` | pinned references to other repositories | 🔜 |
+| `submodule` | pinned commits in `.grovemodes`, exported as real submodules | ✅ (fetching a submodule's contents: 🔜) |
 | `sparse-checkout` | `grove workspace add NAME --only PATH` (a partial workspace) | ✅ |
 | `backfill` | lazy fetching from a server | 🔜 |
 | `archive`, `bundle` | `grove git export`, then `git archive` / `git bundle` | 🔁 |

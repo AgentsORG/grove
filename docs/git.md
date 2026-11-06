@@ -52,9 +52,26 @@ Turns a git repository's first-parent history into Grove changes, keeping each c
 
 | | |
 |---|---|
-| Text files | Byte for byte |
+| Text files | Byte for byte, with no line-ending conversion and no `.gitattributes` filters on the way out |
+| Zero files | Split into declarations when they're formatted (LF, one blank line between declarations, a final newline); otherwise kept whole, byte for byte |
 | Binary files | Byte for byte |
+| Executables, symlinks | Yes, through `.grovemodes` |
+| Submodules | Yes: the pinned commit is kept in `.grovemodes` and `.gitmodules` is an ordinary file. Grove doesn't fetch the submodule's own contents |
+| LFS files | The pointer files git stores, unchanged; Grove doesn't fetch LFS contents |
 | Authors, dates, messages | Yes |
+| Branches | Unmerged branches become lanes; lanes go back out as branches |
 | Tags | Yes |
 | Merge commits | Pull merges are written as real merge commits; import follows first parents |
-| Submodules, LFS pointers | Kept as files today; see [git parity](git-parity.md) |
+
+### `.grovemodes`
+
+Plain files can't say that a file is executable, that it's a symlink, or that a folder is a submodule pinned at a commit. When a git repository has any of these, `grove git import` writes them to `.grovemodes` at the top of the repository:
+
+```
+# git modes Grove keeps for you: <mode> <submodule commit or -> <path>
+100755 - scripts/release.sh
+120000 - latest
+160000 4f2c9e1a0b7d3c6e8f9a1b2c3d4e5f60718293a4 vendor/lib
+```
+
+It's versioned like any other file, so changing a mode is a change that lands. Export reads it back into git's tree modes, so the commits keep their ids. To bump a submodule, change its commit on that line.

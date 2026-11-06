@@ -51,7 +51,26 @@ pub fn decode_binary(source: &str) -> Vec<u8> {
 /// Split one file into declarations.
 pub fn split(path: &str, text: &str) -> Vec<Item> {
     if is_zero_file(path) {
-        split_zero(text)
+        // Split into declarations only when they give back these exact
+        // bytes (formatted code: LF, one blank line between declarations,
+        // a final newline). Anything else is kept whole, byte for byte.
+        let items = split_zero(text);
+        let rendered = items
+            .iter()
+            .map(|i| i.source.as_str())
+            .collect::<Vec<_>>()
+            .join(
+                "
+",
+            );
+        if rendered == text {
+            return items;
+        }
+        vec![Item {
+            name: path.to_string(),
+            kind: DeclKind::File,
+            source: text.to_string(),
+        }]
     } else {
         // Files that aren't Zero code are kept byte for byte: a version
         // control system never rewrites your files.

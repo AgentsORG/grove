@@ -307,3 +307,90 @@ fn branches_import_as_lanes_and_export_as_branches() {
     let (mirror, _) = git::export(&repo).unwrap();
     assert_eq!(git(&mirror.dir, &["rev-parse", "spike"]).trim(), main_tip);
 }
+
+#[test]
+fn executables_symlinks_submodules_and_lfs_pointers_round_trip() {
+    if !has_git() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("src-repo");
+    fs::create_dir_all(&src).unwrap();
+    git(&src, &["init", "--quiet", "--initial-branch=main"]);
+    fs::write(src.join("a.0"), "fn a() -> u32 {\n    return 1\n}\n").unwrap();
+    fs::write(src.join("run.sh"), "#!/bin/sh\necho hi\n").unwrap();
+    // Zero files that aren't formatted are kept byte for byte
+    git(&src, &["config", "core.autocrlf", "false"]);
+    fs::write(
+        src.join("crlf.0"),
+        "fn c() -> u32 {\r\n    return 3\r\n}\r\n",
+    )
+    .unwrap();
+    fs::write(src.join("bare.0"), "fn d() -> u32 {\n    return 4\n}").unwrap();
+    let lfs = "version https://git-lfs.github.com/spec/v1\noid sha256:4d7a214614ab2935c943f9e0ff69d22eadbb8f32b1258daaa5e2ca24d17e2393\nsize 12345\n";
+    fs::write(src.join("logo.png"), lfs).unwrap();
+    fs::write(
+        src.join(".gitmodules"),
+        "[submodule \"vendor/lib\"]\n\tpath = vendor/lib\n\turl = https://example.com/lib.git\n",
+    )
+    .unwrap();
+    git(&src, &["add", "--all"]);
+    git(&src, &["update-index", "--chmod=+x", "run.sh"]);
+    let link_blob = {
+        let p = src.join("link-target.tmp");
+        fs::write(&p, "a.0").unwrap();
+        let b = git(&src, &["hash-object", "-w", "link-target.tmp"])
+            .trim()
+            .to_string();
+        fs::remove_file(&p).unwrap();
+        b
+    };
+    git(
+        &src,
+        &[
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            &format!("120000,{link_blob},latest"),
+        ],
+    );
+    let sub = "0123456789abcdef0123456789abcdef01234567";
+    git(
+        &src,
+        &[
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            &format!("160000,{sub},vendor/lib"),
+        ],
+    );
+    let args = [
+        "-c",
+        "user.name=meera",
+        "-c",
+        "user.email=x@y",
+        "commit",
+        "--quiet",
+        "-m",
+        "Start",
+    ];
+    git(&src, &args);
+    let tip = git(&src, &["rev-parse", "HEAD"]).trim().to_string();
+
+    let dest = tmp.path().join("grove");
+    let (repo, _) = git::import(&src, &dest, &Actor::person("meera"), None).unwrap();
+    let files = repo.main_view().unwrap().files();
+    let modes = &files[git::MODES_FILE];
+    assert!(modes.contains("100755 - run.sh"), "{modes}");
+    assert!(modes.contains("120000 - latest"), "{modes}");
+    assert!(
+        modes.contains(&format!("160000 {sub} vendor/lib")),
+        "{modes}"
+    );
+    assert_eq!(files["logo.png"], lfs, "an LFS pointer stays a pointer");
+    assert_eq!(files["latest"], "a.0", "a symlink holds its target");
+
+    // exporting gives back the very same commit
+    let (mirror, _) = git::export(&repo).unwrap();
+    assert_eq!(git(&mirror.dir, &["rev-parse", "main"]).trim(), tip);
+}

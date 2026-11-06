@@ -22,7 +22,6 @@ use crate::hash::Hash;
 use crate::model::{fresh_id, now, Actor, ActorKind, Change, Evidence};
 use crate::repo::{footprint, mode_word, LandOutcome, Repo, DEFAULT_WORKSPACE};
 use crate::source::split_bytes;
-use crate::workdir::materialize;
 use anyhow::{anyhow, bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -50,6 +49,51 @@ fn git(args: &[&str], dir: Option<&Path>, env: &[(&str, String)]) -> Result<Stri
         );
     }
     Ok(String::from_utf8_lossy(&out.stdout).to_string())
+}
+
+/// Like `git`, feeding `input` on stdin.
+fn git_stdin(args: &[&str], input: &str, env: &[(&str, String)]) -> Result<String> {
+    let mut c = Command::new("git");
+    for (k, v) in env {
+        c.env(k, v);
+    }
+    let mut child = c
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("could not run git (is it installed?)")?;
+    child.stdin.take().unwrap().write_all(input.as_bytes())?;
+    let out = child.wait_with_output()?;
+    if !out.status.success() {
+        bail!(
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).to_string())
+}
+
+/// Git file modes that plain files can't carry: executables, symlinks and
+/// submodules. They live in a tracked file, so they are versioned with the
+/// code and reach every workspace; the git bridge reads and writes it.
+pub const MODES_FILE: &str = ".grovemodes";
+
+/// One line of `.grovemodes`: `<mode> <commit or -> <path>`.
+fn parse_modes(text: &str) -> Vec<(String, String, String)> {
+    text.lines()
+        .filter(|l| !l.trim().is_empty() && !l.starts_with('#'))
+        .filter_map(|l| {
+            let mut p = l.splitn(3, ' ');
+            Some((
+                p.next()?.to_string(),
+                p.next()?.to_string(),
+                p.next()?.to_string(),
+            ))
+        })
+        .collect()
 }
 
 fn email_for(actor: &Actor) -> String {
@@ -138,20 +182,62 @@ impl GitMirror {
     }
 
     /// The git tree a view would produce.
+    /// The git tree for a view, byte for byte: blobs are written with no
+    /// filters (no line-ending conversion, no LFS or other `.gitattributes`
+    /// filters), and `.grovemodes` sets executables, symlinks and submodules.
     fn tree_of(&self, view: &View, key: &str) -> Result<String> {
         let gd = self.gd();
+        let mut files = view.file_bytes();
+        let modes = files
+            .remove(MODES_FILE)
+            .map(|b| parse_modes(&String::from_utf8_lossy(&b)))
+            .unwrap_or_default();
         let tree_dir = std::env::temp_dir().join(fresh_id("grove-tree-", key));
-        std::fs::create_dir_all(&tree_dir)?;
-        materialize(&tree_dir, view, None)?;
-        let wt = format!("--work-tree={}", tree_dir.display());
         let index = self.dir.join(format!("index-{}", fresh_id("", key)));
         let env_index = [("GIT_INDEX_FILE", index.to_string_lossy().to_string())];
-        let result = git(
-            &[&gd, &wt, "add", "--all", "."],
-            Some(&tree_dir),
-            &env_index,
-        )
-        .and_then(|_| git(&[&gd, "write-tree"], Some(&tree_dir), &env_index));
+        let result = (|| -> Result<String> {
+            let paths: Vec<&String> = files.keys().collect();
+            for (path, bytes) in &files {
+                let at = tree_dir.join(path);
+                if let Some(dir) = at.parent() {
+                    std::fs::create_dir_all(dir)?;
+                }
+                std::fs::write(&at, bytes)?;
+            }
+            std::fs::create_dir_all(&tree_dir)?;
+            let list: String = paths
+                .iter()
+                .map(|p| format!("{}\n", tree_dir.join(p).display()))
+                .collect();
+            let shas = if paths.is_empty() {
+                String::new()
+            } else {
+                git_stdin(
+                    &[&gd, "hash-object", "-w", "--no-filters", "--stdin-paths"],
+                    &list,
+                    &[],
+                )?
+            };
+            let mut mode_of: std::collections::HashMap<&str, &str> = Default::default();
+            let mut info = String::new();
+            for (mode, commit, path) in &modes {
+                if mode == "160000" {
+                    info.push_str(&format!("160000 {commit}\t{path}\n"));
+                } else {
+                    mode_of.insert(path.as_str(), mode.as_str());
+                }
+            }
+            for (path, sha) in paths.iter().zip(shas.lines()) {
+                let mode = mode_of.get(path.as_str()).copied().unwrap_or("100644");
+                info.push_str(&format!("{mode} {}\t{path}\n", sha.trim()));
+            }
+            git_stdin(
+                &[&gd, "update-index", "--add", "--index-info"],
+                &info,
+                &env_index,
+            )?;
+            git(&[&gd, "write-tree"], None, &env_index)
+        })();
         let _ = std::fs::remove_file(&index);
         let _ = std::fs::remove_dir_all(&tree_dir);
         Ok(result?.trim().to_string())
@@ -718,14 +804,26 @@ fn tree_at(git_dir: &Path, sha: &str) -> Result<Work> {
     let gd = format!("--git-dir={}", git_dir.display());
     let listing = git(&[&gd, "ls-tree", "-r", "-z", "--full-tree", sha], None, &[])?;
     let mut entries = vec![];
+    let mut modes: Vec<String> = vec![];
     for rec in listing.split('\0').filter(|r| !r.is_empty()) {
         let (meta, path) = rec
             .split_once('\t')
             .ok_or_else(|| anyhow!("odd ls-tree line"))?;
         let mut m = meta.split_whitespace();
-        let (_mode, kind, blob) = (m.next(), m.next(), m.next());
-        if kind == Some("blob") {
-            entries.push((path.to_string(), blob.unwrap_or_default().to_string()));
+        let (mode, kind, obj) = (m.next(), m.next(), m.next());
+        let (mode, obj) = (mode.unwrap_or_default(), obj.unwrap_or_default());
+        if ignored_path(path) || path == MODES_FILE {
+            continue;
+        }
+        match kind {
+            Some("blob") => {
+                if mode != "100644" {
+                    modes.push(format!("{mode} - {path}"));
+                }
+                entries.push((path.to_string(), obj.to_string()));
+            }
+            Some("commit") => modes.push(format!("160000 {obj} {path}")),
+            _ => {}
         }
     }
     let mut child = Command::new("git")
@@ -764,6 +862,14 @@ fn tree_at(git_dir: &Path, sha: &str) -> Result<Work> {
         if !items.is_empty() {
             work.insert(path.clone(), items);
         }
+    }
+    if !modes.is_empty() {
+        modes.sort_by(|a, b| a.splitn(3, ' ').nth(2).cmp(&b.splitn(3, ' ').nth(2)));
+        let text = format!(
+            "# git modes Grove keeps for you: <mode> <submodule commit or -> <path>\n{}\n",
+            modes.join("\n")
+        );
+        work.insert(MODES_FILE.into(), split_bytes(MODES_FILE, text.as_bytes()));
     }
     Ok(work)
 }

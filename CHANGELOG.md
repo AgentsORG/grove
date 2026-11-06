@@ -4,8 +4,14 @@
 
 ### Added
 
+- **Executables, symlinks and submodules** survive the git bridge, kept in a versioned `.grovemodes` file; LFS pointer files stay pointers.
 - **Branches both ways.** `grove git import` brings every unmerged git branch in as a lane, starting where it left the checked-out branch, with its own commits and their original ids. `grove git export` and `push` write lanes back out as branches of the same name.
 - **Exact edges from Zero's resolver.** With the `zero` compiler installed and a `zero.toml` in the repository, code edges come from `zero query --refs` instead of names: a parameter named like a function is no longer an edge, so fewer landings are ordered for nothing. Answers are cached per snapshot in `~/.grove/cache/edges`; without Zero, or when the code doesn't compile, Grove uses names. `grove graph` and the `grove: graph` evidence say which (`from zero` / `from names`). `GROVE_EDGES=names` turns it off, `GROVE_ZERO` points at a specific compiler.
+
+### Fixed
+
+- **Byte-exact git export.** Blobs are written with no filters, so neither `core.autocrlf` nor a repository's `.gitattributes` can change a file on the way out.
+- **Unformatted Zero files are no longer rewritten.** A `.0` file with CRLF endings, no final newline or extra blank lines is kept whole, byte for byte, instead of being re-joined; formatted files still split into declarations. Importing and exporting Grove's own history gives back identical commit ids.
 
 ## [0.3.0] - 2026-11-06
 
