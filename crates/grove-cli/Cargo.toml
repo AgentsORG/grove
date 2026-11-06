@@ -1,0 +1,22 @@
+[package]
+name = "grove-cli"
+description = "The grove command: source control for people and agents, with one graph underneath."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "grove"
+path = "src/main.rs"
+
+[dependencies]
+grove-core.workspace = true
+clap.workspace = true
+anyhow.workspace = true
+serde_json.workspace = true
+serde.workspace = true
+ureq = { version = "2", features = ["json"] }
