@@ -18,7 +18,7 @@ use crate::hash::Hash;
 use crate::model::*;
 use crate::source::is_zero_file;
 use crate::store::{write_atomic, Store};
-use crate::workdir::{materialize, scan, Ignore};
+use crate::workdir::{materialize_scoped, scan, Ignore};
 use anyhow::{anyhow, bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -54,6 +54,9 @@ pub struct Refs {
     /// People's approvals, by change.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub approvals: BTreeMap<ChangeId, Vec<crate::trust::Approval>>,
+    /// Signatures on tags (git's signed tags), by tag.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub tag_signatures: BTreeMap<String, crate::trust::Signature>,
     /// Notes on changes (git's notes), by change.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub notes: BTreeMap<ChangeId, Vec<Hash>>,
@@ -93,6 +96,10 @@ pub struct Workspace {
     /// The lane this workspace works on; none means main.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lane: Option<String>,
+    /// A partial workspace holds only these paths (git's sparse checkout).
+    /// Everything else stays as its base has it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub only: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -209,6 +216,7 @@ impl Repo {
                 actor: Some(actor.clone()),
                 draft: None,
                 lane: None,
+                only: vec![],
             },
         );
         repo.write_refs(&refs)?;
@@ -383,7 +391,16 @@ impl Repo {
             .map(|w| PathBuf::from(&w.path))
             .filter(|p| p.starts_with(&path))
             .collect();
-        scan(&path, &Ignore::load(&path, nested))
+        let mut work = scan(&path, &Ignore::load(&path, nested))?;
+        if !ws.only.is_empty() {
+            work.retain(|f, _| crate::workdir::in_scope(f, &ws.only));
+            for (f, items) in crate::history::view_to_work(&self.view_at(&ws.base)?) {
+                if !crate::workdir::in_scope(&f, &ws.only) {
+                    work.insert(f, items);
+                }
+            }
+        }
+        Ok(work)
     }
 
     /// Landings from main back to `stop` (exclusive), newest first.
@@ -480,7 +497,12 @@ impl Repo {
             let main = refs.main.clone().ok_or_else(|| anyhow!("main is empty"))?;
             let w = self.workspace(refs, ws)?;
             let old = self.view_at(&w.base)?;
-            materialize(Path::new(&w.path), &self.view_at(&main)?, Some(&old))?;
+            materialize_scoped(
+                Path::new(&w.path),
+                &self.view_at(&main)?,
+                Some(&old),
+                &w.only,
+            )?;
             refs.workspaces.get_mut(ws).unwrap().base = main;
             Ok(((), format!("reset {ws} to main")))
         })
@@ -851,7 +873,7 @@ impl Repo {
                 let w = refs.workspaces[&name].clone();
                 let work = self.read_workspace(refs, &name)?;
                 if work_files(&work) == mine.files() {
-                    materialize(Path::new(&w.path), &view, Some(&mine))?;
+                    materialize_scoped(Path::new(&w.path), &view, Some(&mine), &w.only)?;
                     refs.workspaces.get_mut(&name).unwrap().base = lh.clone();
                     synced.push(name);
                 }
@@ -890,7 +912,7 @@ impl Repo {
             result.apply(&self.store, &ops, &Self::renames(&since)).map_err(|e| anyhow!("your edits clash with main: {e}. Record and land them, or undo them, then sync"))?;
             let mut mine = base.clone();
             mine.apply(&self.store, &ops, &[]).map_err(|e| anyhow!(e))?;
-            materialize(Path::new(&w.path), &result, Some(&mine))?;
+            materialize_scoped(Path::new(&w.path), &result, Some(&mine), &w.only)?;
             refs.workspaces.get_mut(ws).unwrap().base = main;
             let msg = format!("synced {ws} past {} change(s), keeping {} edit(s) of your own", since.len(), ops.len());
             Ok((msg.clone(), msg))
@@ -933,6 +955,17 @@ impl Repo {
 
     /// Add a workspace: a new folder holding main, for a person or an agent.
     pub fn add_workspace(&self, name: &str, path: &Path, actor: &Actor) -> Result<PathBuf> {
+        self.add_workspace_only(name, path, actor, &[])
+    }
+
+    /// A workspace that holds only some paths (empty: all of them).
+    pub fn add_workspace_only(
+        &self,
+        name: &str,
+        path: &Path,
+        actor: &Actor,
+        only: &[String],
+    ) -> Result<PathBuf> {
         let path = std::path::absolute(path)?;
         self.transact("workspace", &actor.to_string(), |refs| {
             if refs.workspaces.contains_key(name) {
@@ -943,7 +976,7 @@ impl Repo {
             }
             fs::create_dir_all(&path)?;
             let main = refs.main.clone().ok_or_else(|| anyhow!("main is empty"))?;
-            materialize(&path, &self.view_at(&main)?, None)?;
+            materialize_scoped(&path, &self.view_at(&main)?, None, only)?;
             let marker = WorkspaceFile {
                 repo: self.root.to_string_lossy().into(),
                 name: name.into(),
@@ -960,6 +993,7 @@ impl Repo {
                     actor: Some(actor.clone()),
                     draft: None,
                     lane: None,
+                    only: only.to_vec(),
                 },
             );
             Ok((path.clone(), format!("added workspace {name} for {actor}")))

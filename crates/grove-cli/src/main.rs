@@ -257,6 +257,9 @@ enum WorkspaceCmd {
     Add {
         name: String,
         path: Option<PathBuf>,
+        /// Hold only these paths (repeatable): a partial workspace.
+        #[arg(long = "only", value_name = "PATH")]
+        only: Vec<String>,
     },
     List,
 }
@@ -359,7 +362,7 @@ fn run() -> Result<()> {
 
     match cli.cmd {
         Cmd::Init { .. } => unreachable!(),
-        Cmd::Workspace(WorkspaceCmd::Add { name, path }) => {
+        Cmd::Workspace(WorkspaceCmd::Add { name, path, only }) => {
             let path = path.unwrap_or_else(|| {
                 repo.root.parent().unwrap_or(&repo.root).join(format!(
                     "{}-{name}",
@@ -370,8 +373,11 @@ fn run() -> Result<()> {
                 ))
             });
             let who = flag_actor().unwrap_or_else(|| actor.clone());
-            let p = repo.add_workspace(&name, &path, &who)?;
+            let p = repo.add_workspace_only(&name, &path, &who, &only)?;
             println!("Workspace {name} for {who} at {}", p.display());
+            if !only.is_empty() {
+                println!("  holding only {}", only.join(", "));
+            }
         }
         Cmd::Workspace(WorkspaceCmd::List) => {
             for (name, w) in &refs.workspaces {
@@ -856,8 +862,16 @@ fn run() -> Result<()> {
             }
         }
         Cmd::Tag { name: None, .. } => {
+            let keys = repo.config()?.keys;
             for (name, h) in &refs.tags {
-                println!("{name:<16} {}", h.short());
+                let signed = match refs.tag_signatures.get(name) {
+                    None => "unsigned".to_string(),
+                    Some(sig) => match grove_core::trust::verify_tag(name, h, sig, &keys) {
+                        Ok(who) => format!("signed by {who}"),
+                        Err(why) => why,
+                    },
+                };
+                println!("{name:<16} {}  {signed}", h.short());
             }
         }
         Cmd::Tag {

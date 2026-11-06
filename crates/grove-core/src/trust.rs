@@ -314,3 +314,48 @@ pub fn can_approve(by: &Actor, change: &Change) -> Result<()> {
     }
     Ok(())
 }
+
+fn tag_payload(name: &str, landing: &crate::hash::Hash) -> Vec<u8> {
+    format!("grove-tag\0{name}\0{landing}").into_bytes()
+}
+
+/// Sign a tag with the tagger's key, if they have one.
+pub fn sign_tag(name: &str, landing: &crate::hash::Hash, by: &Actor) -> Option<Signature> {
+    let k = signing_key(by)?;
+    let sig = k.sign(&tag_payload(name, landing));
+    Some(Signature {
+        key: hex::encode(k.verifying_key().to_bytes()),
+        sig: hex::encode(sig.to_bytes()),
+    })
+}
+
+/// Check a tag's signature. `Ok(who)` names the trusted actor whose key
+/// signed it; `Err` means it doesn't verify, or the key isn't trusted.
+pub fn verify_tag(
+    name: &str,
+    landing: &crate::hash::Hash,
+    sig: &Signature,
+    trusted_keys: &BTreeMap<String, String>,
+) -> Result<String, String> {
+    let check = || -> Option<bool> {
+        let key: [u8; 32] = hex::decode(&sig.key).ok()?.try_into().ok()?;
+        let s: [u8; 64] = hex::decode(&sig.sig).ok()?.try_into().ok()?;
+        Some(
+            VerifyingKey::from_bytes(&key)
+                .ok()?
+                .verify(
+                    &tag_payload(name, landing),
+                    &ed25519_dalek::Signature::from_bytes(&s),
+                )
+                .is_ok(),
+        )
+    };
+    if check() != Some(true) {
+        return Err("signature doesn't match".into());
+    }
+    trusted_keys
+        .iter()
+        .find(|(_, k)| **k == sig.key)
+        .map(|(who, _)| who.clone())
+        .ok_or_else(|| format!("signed by an untrusted key {}", &sig.key[..12]))
+}

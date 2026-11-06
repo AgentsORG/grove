@@ -39,6 +39,8 @@ grove workspace add <name> ../<name> --as agent:<harness> --for <person>
 cd ../<name>
 ```
 
+Working on one area? Hold only what you need: add `--only <path>` (repeatable). Fewer files, fewer tokens.
+
 ## The loop
 
 1. `grove sync`: start from the latest main (your unrecorded edits are kept).

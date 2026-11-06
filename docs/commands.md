@@ -7,7 +7,7 @@ Every command takes `--as WHO` (`agent:codex`, `person:meera`, or a name), `--fo
 | Command | Does |
 |---|---|
 | `grove init [--zero] [--check NAME=CMD]` | Start a repository from the current folder. `--zero` adds `zero check`; `--check` adds any command |
-| `grove workspace add NAME [PATH]` | A new folder holding main, for a person or an agent |
+| `grove workspace add NAME [PATH] [--only PATH]...` | A new folder holding main, for a person or an agent; `--only` holds just those paths |
 | `grove workspace list` | Workspaces, their owners and drafts |
 | `grove clone URL [DIR]` | Copy a remote repository |
 
@@ -46,7 +46,7 @@ Every command takes `--as WHO` (`agent:codex`, `person:meera`, or a name), `--fo
 | `grove shelve [NAME]`, `grove unshelve [NAME]`, `grove shelves` | Put edits aside and bring them back |
 | `grove revert CHANGE` | Undo a landed change as a new change |
 | `grove pick CHANGE` | Apply a change from elsewhere |
-| `grove tag [NAME] [--at AT] [--delete]` | Name a landing; list tags |
+| `grove tag [NAME] [--at AT] [--delete]` | Name a landing (signed with your key, if you have one); list tags and who signed them |
 | `grove lane new NAME [--from AT]` | Start a lane |
 | `grove lane use NAME` | Point this workspace at a lane (`main` to go back) |
 | `grove lane land NAME` | Land a lane's work on main as one change |

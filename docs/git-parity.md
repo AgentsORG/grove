@@ -51,7 +51,8 @@ The rule while anything is 🔜: **you can still do it with git**, because `grov
 | `range-diff` | `grove evolve <change>` (every version of a change) | ✅ |
 | `notes` | `grove note <change> "text"` | ✅ |
 | `submodule` | pinned references to other repositories | 🔜 |
-| `sparse-checkout`, `backfill` | partial, lazy workspaces | 🔜 |
+| `sparse-checkout` | `grove workspace add NAME --only PATH` (a partial workspace) | ✅ |
+| `backfill` | lazy fetching from a server | 🔜 |
 | `archive`, `bundle` | `grove git export`, then `git archive` / `git bundle` | 🔁 |
 | `format-patch`, `am` | `grove git export`, then git's tools | 🔁 |
 | `clean` | not needed: untracked files are left alone, ignored files never read | ➖ |
@@ -67,7 +68,7 @@ The rule while anything is 🔜: **you can still do it with git**, because `grov
 | `reflog` | `grove ops`, with `grove undo` | ✅ |
 | `fsck`, `count-objects` | `grove verify` | ✅ |
 | `verify-commit` | signed changes: `grove key new`, `grove key trust`, verified at every landing and in `grove show` | ✅ |
-| `verify-tag` | signed tags | 🔜 |
+| `verify-tag` | signed tags: `grove tag` signs with your key, `grove tag` lists who signed each | ✅ |
 | `rerere` | remembered resolutions: closing a conflict teaches Grove its answer | ✅ |
 | `mergetool`, `difftool` | `grove conflicts <id>` shows base, main and yours | ✅ |
 | `show-branch`, `cherry`, `merge-tree` | `grove lane list`, `grove drafts`, `grove log` | ✅ |

@@ -19,7 +19,7 @@ use crate::hash::Hash;
 use crate::model::*;
 use crate::repo::{work_files, Config, OpEntry, Refs, Repo, Workspace, DEFAULT_WORKSPACE};
 use crate::store::write_atomic;
-use crate::workdir::materialize;
+use crate::workdir::{materialize, materialize_scoped};
 use crate::LandOutcome;
 use anyhow::{anyhow, bail, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -463,7 +463,7 @@ impl Repo {
                         .map_err(|e| anyhow!(e))?;
                     let work = self.read_workspace(refs, &name)?;
                     if work_files(&work) == mine.files() {
-                        materialize(Path::new(&w.path), &view, Some(&mine))?;
+                        materialize_scoped(Path::new(&w.path), &view, Some(&mine), &w.only)?;
                         refs.workspaces.get_mut(&name).unwrap().base = new_main.clone();
                         synced.push(name);
                     }
@@ -498,6 +498,7 @@ impl Repo {
                     actor: Some(actor.clone()),
                     draft: None,
                     lane: None,
+                    only: vec![],
                 },
             );
             materialize(&root, &repo.view_at(&main)?, None)?;

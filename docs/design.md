@@ -77,14 +77,15 @@ When two changes set the same declaration, Grove runs a line-level three-way mer
 
 1. **Today (0.1)**: graph store, stable ids, SHA-256, footprints, land, sync, why, undo, merging inside declarations, binary files, revert, pick, lanes, tags, shelves, bisect, remotes, and the two-way git bridge.
 2. **0.2**: signed changes (ed25519), review rules and approvals, remembered resolutions, notes, presence (`grove who`), pull requests through the git hosts.
-3. **Next**: a merge queue across machines, signed tags, the GroveHub app.
-4. **Then**: tree-sitter graphs for other languages (inferred edges), exact edges from Zero's own resolver, chunked storage for very large binaries, partial (lazy) workspaces.
+3. **0.3**: partial workspaces (`--only`), signed tags.
+4. **Next**: a merge queue across machines, lazy fetching, the GroveHub app.
+5. **Then**: tree-sitter graphs for other languages (inferred edges), exact edges from Zero's own resolver, chunked storage for very large binaries, partial (lazy) workspaces.
 
 ## Known limits today
 
 - Edges in Zero code come from names, not from Zero's resolver yet, so two declarations with the same name in different modules share edges.
 - Files that aren't Zero code are one declaration each: two edits to different lines of a doc merge, but there are no finer graph edges inside them yet.
 - Binary files are stored whole (base64 in the object store); very large binaries are slower than in git.
-- Workspaces are full local copies; there is no partial (lazy) workspace yet.
+- Partial workspaces hold a subset of paths, but the repository's store is still complete on each machine; fetching objects lazily from a server is next.
 - Checks run while the repository lock is held, so landings are serialized on one machine.
 - `grove git import` follows first parents; side branches of merge commits are not imported as lanes yet.

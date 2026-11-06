@@ -88,6 +88,16 @@ meera        meera                      2 unrecorded edit(s)
 default      harshit                    idle
 ```
 
+## Partial workspaces
+
+An agent working on billing doesn't need the whole repository:
+
+```bash
+grove workspace add billing ../billing --as agent:codex --for harshit --only billing --only docs/billing.md
+```
+
+The workspace holds only those paths. Everything else stays as main has it, so nothing outside looks deleted, and sync never writes it. Fewer files to read means fewer tokens for an agent.
+
 ## Longer work: lanes
 
 ```bash

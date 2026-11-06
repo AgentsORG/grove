@@ -12,7 +12,7 @@ use crate::repo::{
 };
 use crate::source::Item;
 use crate::textdiff::unified;
-use crate::workdir::materialize;
+use crate::workdir::{materialize, materialize_scoped};
 use anyhow::{anyhow, bail, Result};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -266,6 +266,10 @@ impl Repo {
         } else {
             paths.iter().map(|p| p.replace('\\', "/")).collect()
         };
+        let wanted: Vec<String> = wanted
+            .into_iter()
+            .filter(|p| crate::workdir::in_scope(p, &w.only))
+            .collect();
         let mut restored = vec![];
         for p in wanted {
             let target = root.join(&p);
@@ -361,7 +365,7 @@ impl Repo {
             result
                 .apply(&self.store, &c.ops, &renames)
                 .map_err(|e| anyhow!("the shelf clashes with this workspace: {e}"))?;
-            materialize(Path::new(&w.path), &result, Some(&current))?;
+            materialize_scoped(Path::new(&w.path), &result, Some(&current), &w.only)?;
             Ok((c.ops.len(), format!("unshelved {name}")))
         })
     }
@@ -401,6 +405,9 @@ impl Repo {
                 bail!("tag {name} already exists");
             }
             refs.tags.insert(name.into(), target.clone());
+            if let Some(sig) = crate::trust::sign_tag(name, &target, actor) {
+                refs.tag_signatures.insert(name.into(), sig);
+            }
             Ok((
                 target.clone(),
                 format!("tagged {} as {name}", target.short()),
@@ -413,6 +420,7 @@ impl Repo {
             refs.tags
                 .remove(name)
                 .ok_or_else(|| anyhow!("no tag named {name}"))?;
+            refs.tag_signatures.remove(name);
             Ok(((), format!("removed tag {name}")))
         })
     }
@@ -448,7 +456,12 @@ impl Repo {
                 .ok_or_else(|| anyhow!("no workspace named {ws}"))?
                 .clone();
             let old = self.view_at(&w.base)?;
-            materialize(Path::new(&w.path), &self.view_at(&new_head)?, Some(&old))?;
+            materialize_scoped(
+                Path::new(&w.path),
+                &self.view_at(&new_head)?,
+                Some(&old),
+                &w.only,
+            )?;
             let wm = refs.workspaces.get_mut(ws).unwrap();
             wm.lane = lane.map(str::to_string);
             wm.base = new_head;

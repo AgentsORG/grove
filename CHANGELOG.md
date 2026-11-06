@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0] - 2026-11-06
+
+### Added
+
+- **Partial workspaces** (git's sparse checkout): `grove workspace add NAME --only PATH` holds only those paths. Everything else stays as main has it, so nothing outside looks deleted and sync never writes it.
+- **Signed tags** (git's verify-tag): `grove tag` signs with your key; `grove tag` lists each tag and who signed it, and a signature moved to another tag doesn't verify.
+
 ## [0.2.0] - 2026-11-06
 
 People stay in charge, and nothing is done twice.
@@ -54,5 +61,6 @@ The first release of Grove: source control for people and agents, with one graph
 
 - One-line installers for macOS, Linux and Windows, prebuilt binaries for x86_64 and arm64, and an agent skill: `npx skills add AgentsORG/grove`.
 
+[0.3.0]: https://github.com/AgentsORG/grove/releases/tag/v0.3.0
 [0.2.0]: https://github.com/AgentsORG/grove/releases/tag/v0.2.0
 [0.1.0]: https://github.com/AgentsORG/grove/releases/tag/v0.1.0

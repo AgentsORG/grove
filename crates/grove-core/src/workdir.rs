@@ -120,3 +120,41 @@ pub fn materialize(root: &Path, view: &View, previous: Option<&View>) -> Result<
     }
     Ok(())
 }
+
+/// Is a path inside a partial workspace's scope? An empty scope is everything.
+pub fn in_scope(path: &str, only: &[String]) -> bool {
+    only.is_empty()
+        || only.iter().any(|p| {
+            let p = p.trim_end_matches('/');
+            path == p || path.starts_with(&format!("{p}/"))
+        })
+}
+
+/// The part of a view a partial workspace holds.
+pub fn scoped(view: &View, only: &[String]) -> View {
+    if only.is_empty() {
+        return view.clone();
+    }
+    View {
+        decls: view
+            .decls
+            .iter()
+            .filter(|(_, n)| in_scope(&n.entry.file, only))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect(),
+    }
+}
+
+/// Write a view into a workspace, keeping to its scope.
+pub fn materialize_scoped(
+    root: &Path,
+    view: &View,
+    previous: Option<&View>,
+    only: &[String],
+) -> Result<()> {
+    if only.is_empty() {
+        return materialize(root, view, previous);
+    }
+    let prev = previous.map(|p| scoped(p, only));
+    materialize(root, &scoped(view, only), prev.as_ref())
+}
