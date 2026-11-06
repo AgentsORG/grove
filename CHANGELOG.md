@@ -33,7 +33,7 @@ The first release of Grove: source control for people and agents, with one graph
 
 - Zero files are split into declarations with stable, deterministic ids; every declaration is addressed by the SHA-256 of its canonical source. The same code builds the same graph on every machine.
 - Other text files are kept byte for byte, and binary files are stored too, so nothing is ever rewritten or dropped.
-- Edges come from references: exact in Zero code, inferred (from names in backticks) in docs.
+- Edges come from references: names used in Zero code, and names in backticks in docs (inferred). Edges from Zero's own resolver are planned.
 
 ### Changes and landing
 

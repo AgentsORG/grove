@@ -79,7 +79,7 @@ When two changes set the same declaration, Grove runs a line-level three-way mer
 2. **0.2**: signed changes (ed25519), review rules and approvals, remembered resolutions, notes, presence (`grove who`), pull requests through the git hosts.
 3. **0.3**: partial workspaces (`--only`), signed tags.
 4. **Next**: a merge queue across machines, lazy fetching, the GroveHub app.
-5. **Then**: tree-sitter graphs for other languages (inferred edges), exact edges from Zero's own resolver, chunked storage for very large binaries, partial (lazy) workspaces.
+5. **Then**: tree-sitter graphs for other languages (inferred edges), exact edges from Zero's own resolver (cached per snapshot), chunked storage for very large binaries, lazy fetching for partial workspaces.
 
 ## Known limits today
 
