@@ -1,6 +1,8 @@
 # Changelog
 
-## [Unreleased]
+## [0.4.0] - 2026-11-07
+
+Agents read only what they really call, and git repositories come through whole.
 
 ### Added
 
@@ -74,6 +76,7 @@ The first release of Grove: source control for people and agents, with one graph
 
 - One-line installers for macOS, Linux and Windows, prebuilt binaries for x86_64 and arm64, and an agent skill: `npx skills add AgentsORG/grove`.
 
+[0.4.0]: https://github.com/AgentsORG/grove/releases/tag/v0.4.0
 [0.3.0]: https://github.com/AgentsORG/grove/releases/tag/v0.3.0
 [0.2.0]: https://github.com/AgentsORG/grove/releases/tag/v0.2.0
 [0.1.0]: https://github.com/AgentsORG/grove/releases/tag/v0.1.0

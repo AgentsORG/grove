@@ -84,7 +84,7 @@ The answer is cached under `~/.grove/cache/edges` by the snapshot's hash, so Zer
 1. **Today (0.1)**: graph store, stable ids, SHA-256, footprints, land, sync, why, undo, merging inside declarations, binary files, revert, pick, lanes, tags, shelves, bisect, remotes, and the two-way git bridge.
 2. **0.2**: signed changes (ed25519), review rules and approvals, remembered resolutions, notes, presence (`grove who`), pull requests through the git hosts.
 3. **0.3**: partial workspaces (`--only`), signed tags.
-4. **Unreleased**: exact edges from Zero's own resolver, cached per snapshot.
+4. **0.4**: exact edges from Zero's own resolver, git branches as lanes, a byte-exact git bridge (modes, submodules, LFS pointers, line endings).
 5. **Next**: a merge queue across machines, lazy fetching, the GroveHub app.
 6. **Then**: tree-sitter graphs for other languages (inferred edges), chunked storage for very large binaries, lazy fetching for partial workspaces.
 

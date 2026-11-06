@@ -3,7 +3,7 @@ members = ["crates/grove-core", "crates/grove-cli"]
 resolver = "2"
 
 [workspace.package]
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/AgentsORG/grove"
@@ -23,4 +23,4 @@ anyhow = "1"
 thiserror = "2"
 clap = { version = "4", features = ["derive"] }
 tempfile = "3"
-grove-core = { path = "crates/grove-core", version = "0.3.0" }
+grove-core = { path = "crates/grove-core", version = "0.4.0" }
