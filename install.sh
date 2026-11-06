@@ -74,8 +74,8 @@ printf 'Downloading grove for %s (%s)\n' "$target" "$version"
 download "$base/$asset" "$tmp/$asset" || fail "could not download $base/$asset"
 
 # Verify the checksum when the release has one and a tool is available.
-if download "$base/$asset.sha256" "$tmp/$asset.sha256" 2>/dev/null; then
-  expected="$(awk '{print $1}' "$tmp/$asset.sha256")"
+if download "$base/grove-$target.sha256" "$tmp/grove.sha256" 2>/dev/null; then
+  expected="$(awk '{print $1}' "$tmp/grove.sha256")"
   if command -v sha256sum >/dev/null 2>&1; then
     actual="$(sha256sum "$tmp/$asset" | awk '{print $1}')"
   elif command -v shasum >/dev/null 2>&1; then

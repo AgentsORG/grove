@@ -23,8 +23,8 @@ try {
     Invoke-WebRequest -UseBasicParsing "$base/$asset" -OutFile (Join-Path $tmp $asset)
 
     try {
-        Invoke-WebRequest -UseBasicParsing "$base/$asset.sha256" -OutFile (Join-Path $tmp "$asset.sha256")
-        $expected = ((Get-Content (Join-Path $tmp "$asset.sha256") -Raw).Trim() -split '\s+')[0].ToLower()
+        Invoke-WebRequest -UseBasicParsing "$base/grove-$target.sha256" -OutFile (Join-Path $tmp "grove.sha256")
+        $expected = ((Get-Content (Join-Path $tmp "grove.sha256") -Raw).Trim() -split '\s+')[0].ToLower()
         $actual = (Get-FileHash -Algorithm SHA256 (Join-Path $tmp $asset)).Hash.ToLower()
         if ($expected -ne $actual) { throw "checksum mismatch for $asset" }
     } catch [System.Net.WebException] {
