@@ -206,11 +206,12 @@ impl View {
             .map(|(file, mut items)| {
                 items.sort_by(|a, b| (a.0, a.1).cmp(&(b.0, b.1)));
                 let text = if is_zero_file(file) {
-                    items
-                        .iter()
-                        .map(|(_, _, n)| n.source.as_str())
-                        .collect::<Vec<_>>()
-                        .join("\n")
+                    crate::source::join_zero(
+                        &items
+                            .iter()
+                            .map(|(_, _, n)| n.source.as_str())
+                            .collect::<Vec<_>>(),
+                    )
                 } else {
                     items
                         .iter()

@@ -134,9 +134,14 @@ pub fn merge3(base: &str, ours: &str, theirs: &str) -> Option<String> {
         pos = h.end;
     }
     out.extend(b[pos..].iter().map(|s| s.to_string()));
-    let mut s = out.join("\n");
+    let nl = if ours.contains("\r\n") || theirs.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    };
+    let mut s = out.join(nl);
     if ours.ends_with('\n') || theirs.ends_with('\n') {
-        s.push('\n');
+        s.push_str(nl);
     }
     Some(s)
 }

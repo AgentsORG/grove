@@ -52,18 +52,23 @@ pub fn decode_binary(source: &str) -> Vec<u8> {
 pub fn split(path: &str, text: &str) -> Vec<Item> {
     if is_zero_file(path) {
         // Split into declarations only when they give back these exact
-        // bytes (formatted code: LF, one blank line between declarations,
-        // a final newline). Anything else is kept whole, byte for byte.
-        let items = split_zero(text);
-        let rendered = items
-            .iter()
-            .map(|i| i.source.as_str())
-            .collect::<Vec<_>>()
-            .join(
-                "
-",
-            );
-        if rendered == text {
+        // bytes: one blank line between declarations, LF or CRLF, with or
+        // without a final newline. Anything else is kept whole.
+        let mut items = split_zero(text);
+        if !text.ends_with('\n') {
+            if let Some(last) = items.last_mut() {
+                if last.source.ends_with('\n') {
+                    last.source.pop();
+                }
+            }
+        }
+        if text.contains("\r\n") {
+            for i in &mut items {
+                i.source = i.source.replace('\n', "\r\n");
+            }
+        }
+        let sources: Vec<&str> = items.iter().map(|i| i.source.as_str()).collect();
+        if join_zero(&sources) == text {
             return items;
         }
         vec![Item {
@@ -81,6 +86,17 @@ pub fn split(path: &str, text: &str) -> Vec<Item> {
             source,
         }]
     }
+}
+
+/// A Zero file from its declarations, in order: one blank line between
+/// them, with the file's own line ending (CRLF when its declarations use it).
+pub fn join_zero(sources: &[&str]) -> String {
+    let sep = if sources.iter().any(|s| s.contains("\r\n")) {
+        "\r\n"
+    } else {
+        "\n"
+    };
+    sources.join(sep)
 }
 
 /// Split Zero source into top-level declarations.
@@ -379,6 +395,32 @@ pub fn rename_refs(text: &str, from: &str, to: &str, code: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn rebuilt(items: &[Item]) -> String {
+        join_zero(&items.iter().map(|i| i.source.as_str()).collect::<Vec<_>>())
+    }
+
+    #[test]
+    fn crlf_and_missing_final_newline_still_split_exactly() {
+        let lf = "fn a() -> u32 {\n    return 1\n}\n\nfn b() -> u32 {\n    return 2\n}\n";
+        for text in [
+            lf.to_string(),
+            lf.replace('\n', "\r\n"),
+            lf.trim_end().to_string(),
+            lf.replace('\n', "\r\n").trim_end().to_string(),
+        ] {
+            let items = split("m.0", &text);
+            assert_eq!(items.len(), 2, "{text:?}");
+            assert!(items.iter().all(|i| i.kind == DeclKind::Fn));
+            assert_eq!(rebuilt(&items), text);
+        }
+        // a layout the declarations can't give back is kept whole
+        let odd = "fn a() -> u32 {\n    return 1\n}\n\n\n\nfn b() -> u32 {\n    return 2\n}\n";
+        let items = split("m.0", odd);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].kind, DeclKind::File);
+        assert_eq!(items[0].source, odd);
+    }
 
     const SRC: &str = r#"use std.mem
 

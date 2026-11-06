@@ -53,7 +53,7 @@ Turns a git repository's first-parent history into Grove changes, keeping each c
 | | |
 |---|---|
 | Text files | Byte for byte, with no line-ending conversion and no `.gitattributes` filters on the way out |
-| Zero files | Split into declarations when they're formatted (LF, one blank line between declarations, a final newline); otherwise kept whole, byte for byte |
+| Zero files | Byte for byte, split into declarations (LF or CRLF, with or without a final newline); a file with an unusual layout, such as extra blank lines between declarations, is kept whole |
 | Binary files | Byte for byte |
 | Executables, symlinks | Yes, through `.grovemodes` |
 | Submodules | Yes: the pinned commit is kept in `.grovemodes` and `.gitmodules` is an ordinary file. Grove doesn't fetch the submodule's own contents |

@@ -11,7 +11,7 @@
 ### Fixed
 
 - **Byte-exact git export.** Blobs are written with no filters, so neither `core.autocrlf` nor a repository's `.gitattributes` can change a file on the way out.
-- **Unformatted Zero files are no longer rewritten.** A `.0` file with CRLF endings, no final newline or extra blank lines is kept whole, byte for byte, instead of being re-joined; formatted files still split into declarations. Importing and exporting Grove's own history gives back identical commit ids.
+- **Zero files are no longer rewritten.** A `.0` file keeps its own line endings (LF or CRLF) and a missing final newline while still splitting into declarations; merges inside a declaration keep CRLF too. A file whose layout the declarations can't give back (extra blank lines between them) is kept whole, byte for byte. Importing and exporting Grove's own history gives back identical commit ids.
 
 ## [0.3.0] - 2026-11-06
 

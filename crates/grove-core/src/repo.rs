@@ -1127,11 +1127,9 @@ pub fn work_files(work: &Work) -> BTreeMap<String, String> {
     work.iter()
         .map(|(file, items)| {
             let text = if is_zero_file(file) {
-                items
-                    .iter()
-                    .map(|i| i.source.as_str())
-                    .collect::<Vec<_>>()
-                    .join("\n")
+                crate::source::join_zero(
+                    &items.iter().map(|i| i.source.as_str()).collect::<Vec<_>>(),
+                )
             } else {
                 items.iter().map(|i| i.source.as_str()).collect::<String>()
             };
