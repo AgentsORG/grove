@@ -1,0 +1,50 @@
+name: release
+# Push a tag like v0.1.0 to build grove for every platform and publish a
+# GitHub release with the binaries and their SHA-256 checksums. install.sh
+# and install.ps1 download from here.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/create-gh-release-action@v1
+        with:
+          changelog: CHANGELOG.md
+          title: Grove $version
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  binaries:
+    needs: create-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-musl, os: ubuntu-latest }
+          - { target: aarch64-unknown-linux-musl, os: ubuntu-latest }
+          - { target: x86_64-apple-darwin, os: macos-latest }
+          - { target: aarch64-apple-darwin, os: macos-latest }
+          - { target: x86_64-pc-windows-msvc, os: windows-latest }
+          - { target: aarch64-pc-windows-msvc, os: windows-latest }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - if: startsWith(matrix.os, 'ubuntu')
+        uses: taiki-e/setup-cross-toolchain-action@v1
+        with:
+          target: ${{ matrix.target }}
+      - uses: taiki-e/upload-rust-binary-action@v1
+        with:
+          bin: grove
+          target: ${{ matrix.target }}
+          archive: grove-$target
+          checksum: sha256
+          include: LICENSE,NOTICE,README.md
+          token: ${{ secrets.GITHUB_TOKEN }}

@@ -7,109 +7,136 @@
 <p align="center"><b>Source control for people and agents, with one graph underneath.</b></p>
 
 <p align="center">
-  <a href="LICENSE">Apache-2.0</a> ·
-  <a href="docs/design.md">How it works</a> ·
+  <a href="https://github.com/AgentsORG/grove/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/AgentsORG/grove?color=0a84ff"></a>
+  <a href="https://github.com/AgentsORG/grove/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/AgentsORG/grove/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-111111"></a>
+</p>
+
+<p align="center">
+  <a href="docs/install.md">Install</a> ·
+  <a href="docs/quickstart.md">Quick start</a> ·
+  <a href="docs/concepts.md">Concepts</a> ·
+  <a href="docs/commands.md">Commands</a> ·
   <a href="docs/git-parity.md">Git parity</a> ·
-  <a href="CONTRIBUTING.md">Contributing</a> ·
   Built in the open by <a href="https://agents.org.in">Agents</a>
 </p>
 
 ---
 
-Agents now write code in parallel, many at a time. Git was built for people trading patches: it stores text, compares lines, and calls two edits a conflict when they sit near each other, even when they change different things. Grove keeps everything git gives you and changes what a change *is*.
+## Install
 
-- **The program graph is the record.** Code is split into declarations: functions, constants, types, tests. Each one has a stable id and is addressed by the SHA-256 of its source. Edges come from references. Files and git commits are views of the graph.
-- **A change knows what it touches.** Every change records its edits, its intent, who made it and who it was for. It also records its **footprint**: what it writes, what it reads, and which call sites its renames rewrite.
-- **Separate work lands together.** Work that depends on something that just changed is replayed on top of that change and checked again. Only two different edits to the same declaration count as a conflict. That conflict is saved, and anyone, person or agent, can pick it up.
-- **Renames carry the meaning.** A rename reaches call sites someone added after the rename was written.
-- **Nothing lands unchecked.** Checks such as `zero check` run on the combined result before main moves.
-- **Every operation can be undone.** Each one is logged with the state before and after it.
-- **It still works with git.** `grove git push` sends a real git history to GitHub, GitLab or any other git host. `grove git import` brings a git repository's history in.
+**macOS and Linux**
 
-Grove is built around [Zero](https://zerolang.ai), the programming language for agents, whose programs are graphs already. Other files are tracked too: as whole files today, with graph edges inferred from the names they mention in backticks.
+```bash
+curl -fsSL https://raw.githubusercontent.com/AgentsORG/grove/main/install.sh | sh
+```
+
+**Windows (PowerShell)**
+
+```powershell
+irm https://raw.githubusercontent.com/AgentsORG/grove/main/install.ps1 | iex
+```
+
+**For agents** (Claude Code, Codex, Cursor, Copilot, Gemini CLI, and others that read skills)
+
+```bash
+npx skills add AgentsORG/grove
+```
+
+Prebuilt for x86_64 and arm64 on all three systems, checksummed. Or from source: `cargo install --git https://github.com/AgentsORG/grove grove-cli`. More in [docs/install.md](docs/install.md).
+
+---
+
+## Why Grove
+
+Agents now write code in parallel, many at a time. Git stores text and compares lines, so it calls two edits a conflict when they sit near each other, even when they change different things. And it can't tell you which agent did what, for whom, or why. Grove keeps everything git gives you and changes what a change *is*:
+
+- **The program graph is the record.** Code is split into declarations, each with a stable id and a SHA-256 content address. The same code builds the same graph on every machine. Files and git commits are views of it.
+- **A change knows what it touches:** its edits, its intent, who made it, who it was for, and what it writes and reads.
+- **Separate work lands together. Dependent work is ordered after.** Edits to different lines of one function merge. Only the same lines set differently are a conflict, and it's saved for anyone to pick up.
+- **Renames carry meaning.** A rename reaches call sites someone wrote after it.
+- **Nothing lands unchecked.** Checks such as `zero check` run on the combined result first.
+- **Everything can be undone,** including a land.
+- **It's still git.** Push to GitHub or GitLab, pull commits back, import any git history with its original commit ids.
+
+## Everyone in their own workspace
+
+<img src="docs/images/workspaces.png" alt="Three terminals side by side: Claude Code, Codex and Meera each in their own workspace; Codex's change lands together with the other two" width="100%">
+
+```bash
+grove init --as harshit --zero
+grove workspace add codex ../codex --as agent:codex --for rishitabh
+grove workspace add meera ../meera --as meera
+
+cd ../codex && grove new "Back off retries" && grove land
+Landed c_c7e86c "Back off retries" (together with c_0d9501)
+  ok   zero check
+```
+
+An agent always works *for* a person, and every change says so. [Working together →](docs/working-together.md)
 
 ## Parallel work, on the graph
 
-<img src="docs/images/graph.png" alt="Grove's graph view: rings mark each person's or agent's change; separate rings land together, a shared edge orders Cursor after Codex" width="100%">
+<img src="docs/images/graph.png" alt="Grove's graph view: rings mark each change; separate rings land together, a shared edge orders Cursor after Codex" width="100%">
 
-Each ring is someone's change, marked with their face or their agent's mark. People are round; agents are square and wear the face of the person they work for. Rings that don't touch land together. A shared edge puts one change after the other. Shaded areas are clusters of code that work together.
+Each ring is someone's change. People are round; agents are square and wear the face of the person they work for. Rings that don't touch land together. A shared edge orders one after the other. [Concepts →](docs/concepts.md)
 
-## History is a graph too
+## History you can ask questions
 
-<img src="docs/images/history.png" alt="Grove's history view: changes that landed in the same moment share a bracket, a release tag, a lane joining main, and a card showing a change's author, sponsor, approver, signature, ops and evidence" width="100%">
-
-## Review reads the meaning first
-
-<img src="docs/images/review.png" alt="A review in Grove: a rename described in three plain sentences, the source diff underneath, evidence, and an approval required because a public signature changed" width="100%">
-
-## When work really collides
-
-<img src="docs/images/conflict.png" alt="A conflict in Grove: two people changed the same line of retryDelay; one statement merged on its own, and Claude Code proposes a combined line that passes the checks" width="100%">
-
-> The four screens above are design previews of the Grove app, which is being built as **GroveHub**. Everything in the command-line section below works today.
-
-## Try it
+<img src="docs/images/history.png" alt="Grove's history: changes that landed together share a bracket, a release tag, a lane joining main, and one change's details" width="100%">
 
 ```bash
-git clone https://github.com/AgentsORG/grove && cd grove
-cargo install --path crates/grove-cli
-bash examples/demo.sh   # the whole story: four agents and two people, real landings, real zero check
+grove why retryDelay           # who changed it, for whom, and why, through renames
+grove revert c_c7e86c          # undo a change as a new change
+grove lane new checkout-v2     # longer work beside main
+grove bisect --run "zero test ."
+grove undo                     # any operation
 ```
 
-```text
-$ grove init --as harshit --zero
-Started a Grove repository in ~/acme-api
-  8 declarations, 6 edges, as harshit
+[History →](docs/history.md)
 
-$ grove workspace add codex  ../codex  --as agent:codex  --for rishitabh
-$ grove workspace add cursor ../cursor --as agent:cursor --for dev
+## Reviews read meaning, conflicts are rare
 
-# both agents edit at once, each in its own folder
-$ cd ../codex  && grove new "Back off retries"
-Recorded c_c7e86c v1 "Back off retries" as codex for rishitabh
-  writes   retryDelay
-  reads    fetchAll
+<img src="docs/images/review.png" alt="A change described as a rename, a new parameter and three updated call sites, with the source diff and evidence" width="100%">
 
-$ cd ../cursor && grove new "Use retryDelay in fetchAll"
-$ cd ../codex  && grove land
-Landed c_c7e86c "Back off retries" (direct)
-  ok   zero check
-$ cd ../cursor && grove land
-Landed c_c547e6 "Use retryDelay in fetchAll" (ordered after c_c7e86c)
-  ok   zero check
+<img src="docs/images/conflict.png" alt="A real conflict: two edits to the same line of retryDelay, one statement merged on its own, and an agent proposing a combined line" width="100%">
 
-$ grove why retryDelay
-c_c7e86c  codex for rishitabh  "Back off retries"  (direct)
+[Reviews and conflicts →](docs/review-and-conflicts.md)
 
-$ grove git push git@github.com:you/acme-api.git
-pushed main to git@github.com:you/acme-api.git
+## Git all the way down
+
+<img src="docs/images/gitbridge.png" alt="grove git push, then git log showing each landing as a commit by its agent or person, with Grove trailers" width="100%">
+
+```bash
+grove git push git@github.com:you/acme-api.git   # one commit per landing, with Grove trailers
+grove git pull git@github.com:you/acme-api.git   # bring in commits made on GitHub
+grove git import ~/code/old-repo ./acme-api      # any git history, original commit ids kept
 ```
+
+[Git →](docs/git.md) · Every git command and its Grove form: [git parity](docs/git-parity.md)
 
 ## Commands
 
-| Command | What it does |
+| | |
 |---|---|
-| `grove init [--zero] [--check NAME=CMD]` | Start a repository from the current folder |
-| `grove workspace add NAME [PATH] --as WHO [--for PERSON]` | A folder of its own for a person or an agent |
-| `grove status` | What this workspace changed, by declaration |
-| `grove new "<intent>"` | Record the edits as a change; record again for a new version |
-| `grove land [CHANGE]` | Replay, order, check, land |
-| `grove sync` | Bring this workspace up to main, keeping your own edits |
-| `grove remote add NAME URL`, `grove clone URL [DIR]` | Remotes: a GroveHub repository or another repository's folder |
-| `grove fetch`, `grove pull` | Get what's new on a remote; move main and sync this workspace |
-| `grove push [--review]` | Send landings the remote lacks, then this workspace's change, which the remote lands (or keeps open for review) |
-| `grove log`, `grove show C`, `grove why NAME [--all]` | History and who changed what, and why |
-| `grove cat FILE`, `grove graph [--dot \| --json]` | Main's files and its program graph |
-| `grove conflicts [ID]`, `grove resolve ID` | Saved conflicts |
-| `grove undo`, `grove ops` | The operation log |
-| `grove git export \| push URL \| import SRC DEST` | Work with git |
-| `grove verify` | Check every object still matches its address |
+| `init`, `workspace add`, `clone` | Start, or join |
+| `status`, `diff`, `new`, `land`, `sync` | The everyday loop |
+| `log`, `show`, `why`, `find`, `evolve`, `shortlog`, `graph`, `cat` | Read history |
+| `undo`, `ops`, `restore`, `shelve`, `revert`, `pick` | Undo and move work |
+| `lane`, `tag`, `bisect` | Branches, releases, finding what broke |
+| `conflicts`, `resolve`, `verify` | Conflicts and integrity |
+| `remote`, `fetch`, `pull`, `push` | Between Grove repositories and GroveHub |
+| `git export\|push\|pull\|import` | Between Grove and git |
 
-`--as agent:codex --for rishitabh` (or the `GROVE_AS` and `GROVE_FOR` environment variables) says who is acting. `--json` gives machine-readable output for agents.
+All of them: [docs/commands.md](docs/commands.md). `--as`, `--for` and `--json` work everywhere.
 
-## Status
+## Built around Zero
 
-Early, and honest about it. This is phase 1: one machine, many workspaces, the git bridge. [docs/git-parity.md](docs/git-parity.md) checks every command in git's own command list and says what works today, what's planned, and what isn't needed. Remotes work: `grove clone`, `pull` and `push` talk to another folder or a GroveHub server, which lands changes with the same engine. The biggest gaps right now are binary files, signed identities, and pull requests through the git hosts. [docs/design.md](docs/design.md) explains how it works and lists its current limits.
+Grove understands [Zero](https://zerolang.ai), the programming language for agents, best: its programs are graphs already. Every other file is tracked too, byte for byte.
+
+```bash
+curl -fsSL https://zerolang.ai/install.sh | bash   # optional: for `grove init --zero`
+```
 
 ## Contributing
 

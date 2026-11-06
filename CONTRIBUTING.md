@@ -19,6 +19,9 @@ cargo clippy --all-targets -- -D warnings
 | `crates/grove-core` | The engine: store, graph, ops, diff, landing, op log, git bridge |
 | `crates/grove-cli` | The `grove` command |
 | `crates/grove-core/tests/scenarios.rs` | The behaviour Grove promises, as stories. Add one for every new promise. |
+| `crates/grove-core/tests/history.rs`, `git_bridge.rs`, `remote.rs` | History tools, the git bridge, remotes |
+| `skills/grove/SKILL.md` | The agent skill (`npx skills add AgentsORG/grove`) |
+| `install.sh`, `install.ps1`, `.github/workflows/release.yml` | Installers and the release pipeline: push a `v*` tag to release |
 | `docs/design.md` | How it works. Update it when behaviour changes. |
 | `docs/git-parity.md` | What works compared with git. Update it in the same PR. |
 

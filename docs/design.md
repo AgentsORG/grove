@@ -65,16 +65,25 @@ Every command that changes refs appends an entry to `.grove/oplog.jsonl` with th
 
 Transports: a folder (`Folder`) in grove-core, HTTP in the CLI. A server hosts bare repositories (`Repo::init_bare`) whose first landing arrives by push.
 
+## Merging inside a declaration
+
+When two changes set the same declaration, Grove runs a line-level three-way merge of base, main and the incoming version. If they changed different lines, the merged text lands, recorded as `grove: merged inside <name>` evidence and ordered after the other change. Only overlapping edits that differ become a conflict.
+
+## History tools
+
+`revert` builds the inverse ops of a landed change (renames back first, so the rest see the original names) and lands them as a new change. `pick` replays a change's ops from wherever it is, based on the shared history. Lanes are named heads: a workspace on a lane lands there, and `lane land` lands the lane's whole difference from its fork point onto main as one change. Tags name landings. Shelves store unrecorded edits as a change object and replay them later. `bisect` materializes landings in scratch folders and halves the range.
+
 ## Phases
 
-1. **One machine** (this release): graph store, stable ids, SHA-256, footprints, land, sync, why, undo, the git bridge.
-2. **Together**: the Grove server, signed identities and delegation, presence, review rules, a merge queue across machines, remote sync, pull requests through the git hosts.
-3. **Everything else**: tree-sitter graphs for other languages (inferred edges), binary files, exact edges from Zero's own resolver, statement-level merge inside one declaration, lanes, tags, the app.
+1. **Today (0.1)**: graph store, stable ids, SHA-256, footprints, land, sync, why, undo, merging inside declarations, binary files, revert, pick, lanes, tags, shelves, bisect, remotes, and the two-way git bridge.
+2. **Next**: signed identities and delegation, presence, review rules, a merge queue across machines, pull requests through the git hosts, the GroveHub app.
+3. **Then**: tree-sitter graphs for other languages (inferred edges), exact edges from Zero's own resolver, chunked storage for very large binaries, partial (lazy) workspaces.
 
 ## Known limits today
 
-- Text files only; binary files are skipped (see the parity list).
 - Edges in Zero code come from names, not from Zero's resolver yet, so two declarations with the same name in different modules share edges.
-- Two edits to the same declaration always conflict, even on different lines.
-- Workspaces are local folders; remotes sync through GroveHub or another folder. When main moved both locally and on the remote, push refuses instead of re-landing local changes on the remote.
+- Files that aren't Zero code are one declaration each: two edits to different lines of a doc merge, but there are no finer graph edges inside them yet.
+- Binary files are stored whole (base64 in the object store); very large binaries are slower than in git.
+- Workspaces are full local copies; there is no partial (lazy) workspace yet.
 - Checks run while the repository lock is held, so landings are serialized on one machine.
+- `grove git import` follows first parents; side branches of merge commits are not imported as lanes yet.
