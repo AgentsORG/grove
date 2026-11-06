@@ -76,9 +76,10 @@ fn checkoutLabel() -> u32 {
 }
 EOF
 printf '# API\n\nCall `rateLimit` before `fetchAll`.\n' > docs/api.md
-checks=()
-command -v zero >/dev/null && checks=(--zero)
-"$grove" init --as harshit "${checks[@]}"
+zero_flag=""
+command -v zero >/dev/null && zero_flag="--zero"
+# shellcheck disable=SC2086 # empty when zero is not installed
+"$grove" init --as harshit $zero_flag
 "$grove" graph
 
 say "Six workspaces: four agents, each working for someone, and two people"
