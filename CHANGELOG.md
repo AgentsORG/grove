@@ -4,6 +4,7 @@
 
 ### Added
 
+- **Branches both ways.** `grove git import` brings every unmerged git branch in as a lane, starting where it left the checked-out branch, with its own commits and their original ids. `grove git export` and `push` write lanes back out as branches of the same name.
 - **Exact edges from Zero's resolver.** With the `zero` compiler installed and a `zero.toml` in the repository, code edges come from `zero query --refs` instead of names: a parameter named like a function is no longer an edge, so fewer landings are ordered for nothing. Answers are cached per snapshot in `~/.grove/cache/edges`; without Zero, or when the code doesn't compile, Grove uses names. `grove graph` and the `grove: graph` evidence say which (`from zero` / `from names`). `GROVE_EDGES=names` turns it off, `GROVE_ZERO` points at a specific compiler.
 
 ## [0.3.0] - 2026-11-06

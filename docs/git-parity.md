@@ -17,7 +17,8 @@ The rule while anything is 🔜: **you can still do it with git**, because `grov
 | Undo in Grove moves git's `main` back | ✅ |
 | Binary files | ✅ byte for byte |
 | Tags | ✅ exported and pushed |
-| Side branches of merge commits on import | 🔜 imported as lanes |
+| Branches: unmerged git branches import as lanes; lanes export and push as branches, keeping commit ids | ✅ |
+| Side branches of merge commits on import | their result is kept in the merge's tree; the separate commits are flattened, as `git log --first-parent` shows them |
 | Pull requests: open one from a Grove change | ✅ `grove git pr <url>` (opens it on GitHub with `gh`) |
 | Git LFS and submodules | 🔜 kept as ordinary files today |
 

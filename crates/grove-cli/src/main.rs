@@ -328,6 +328,11 @@ fn run() -> Result<()> {
             view.decls.len(),
             view.edges().len()
         );
+        let lanes = repo.refs()?.lanes;
+        if !lanes.is_empty() {
+            let names: Vec<&str> = lanes.keys().map(String::as_str).collect();
+            println!("  branches as lanes: {}", names.join(", "));
+        }
         return Ok(());
     }
 

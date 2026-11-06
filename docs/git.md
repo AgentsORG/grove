@@ -16,7 +16,7 @@ Every landing becomes one git commit on `main`:
 - the **message** is the intent,
 - the **trailers** carry the rest: `Grove-Change`, `Grove-Mode` (direct, together, ordered), `Grove-Agent`, `Grove-For`, `Grove-Evidence`.
 
-Tags are pushed as git tags. Undo in Grove moves git's `main` back on the next push (use `--force` when the remote already has the undone commit).
+Tags are pushed as git tags, and lanes as branches of the same name. Undo in Grove moves git's `main` back on the next push (use `--force` when the remote already has the undone commit).
 
 `grove git export` writes the same history to `.grove/git` without pushing, for any git tool to read.
 
@@ -46,7 +46,7 @@ grove git import ~/code/old-repo ~/code/acme-api
 grove git import ~/code/old-repo ~/code/acme-api --last 200   # only recent history
 ```
 
-Turns a git repository's first-parent history into Grove changes, keeping each commit's author, date and subject. When Grove reproduces a commit's tree exactly, the commit keeps its id, so importing and exporting again gives back the same history.
+Turns a git repository's first-parent history into Grove changes, keeping each commit's author, date and subject. Every other branch with commits of its own becomes a lane that starts where it left the checked-out branch (`main` itself, when it isn't checked out, becomes `git-main`); branches already merged are skipped. When Grove reproduces a commit's tree exactly, the commit keeps its id, so importing and exporting again gives back the same history and the same branches.
 
 ## What carries over
 

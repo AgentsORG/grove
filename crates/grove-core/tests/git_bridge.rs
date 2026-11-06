@@ -247,3 +247,63 @@ fn edit_and_land(repo: &Repo, root: &std::path::Path, from: &str, to: &str, inte
     repo.record(DEFAULT_WORKSPACE, intent, &me).unwrap();
     repo.land(DEFAULT_WORKSPACE, None, &me).unwrap();
 }
+
+#[test]
+fn branches_import_as_lanes_and_export_as_branches() {
+    if !has_git() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("src-repo");
+    fs::create_dir_all(&src).unwrap();
+    git(&src, &["init", "--quiet", "--initial-branch=main"]);
+    let commit = |msg: &str| {
+        git(&src, &["add", "--all"]);
+        let args = [
+            "-c",
+            "user.name=meera",
+            "-c",
+            "user.email=x@y",
+            "commit",
+            "--quiet",
+            "-m",
+            msg,
+        ];
+        git(&src, &args);
+        git(&src, &["rev-parse", "HEAD"]).trim().to_string()
+    };
+    fs::write(src.join("a.0"), "fn a() -> u32 {\n    return 1\n}\n").unwrap();
+    commit("Start");
+    // a branch that was merged: nothing of its own
+    git(&src, &["branch", "done"]);
+    // a branch with two commits of its own
+    git(&src, &["checkout", "--quiet", "-b", "feature/b"]);
+    fs::write(src.join("b.0"), "fn b() -> u32 {\n    return 2\n}\n").unwrap();
+    commit("Add b");
+    fs::write(src.join("b.0"), "fn b() -> u32 {\n    return 3\n}\n").unwrap();
+    let b_tip = commit("Three");
+    // main moves on
+    git(&src, &["checkout", "--quiet", "main"]);
+    fs::write(src.join("a.0"), "fn a() -> u32 {\n    return 9\n}\n").unwrap();
+    let main_tip = commit("Nine");
+
+    let dest = tmp.path().join("grove");
+    let (repo, n) = git::import(&src, &dest, &Actor::person("meera"), None).unwrap();
+    assert_eq!(n, 4, "two on main, two on the lane");
+    let refs = repo.refs().unwrap();
+    assert_eq!(refs.lanes.keys().collect::<Vec<_>>(), vec!["feature/b"]);
+    let lane = repo.view_at(&refs.lanes["feature/b"]).unwrap().files();
+    assert!(lane["b.0"].contains("return 3") && lane["a.0"].contains("return 1"));
+    assert!(!repo.main_view().unwrap().files().contains_key("b.0"));
+
+    // back out to git: same branches, same commit ids
+    let (mirror, _) = git::export(&repo).unwrap();
+    assert_eq!(git(&mirror.dir, &["rev-parse", "main"]).trim(), main_tip);
+    assert_eq!(git(&mirror.dir, &["rev-parse", "feature/b"]).trim(), b_tip);
+
+    // a lane started in Grove exports as a branch too
+    repo.lane_new("spike", None, &Actor::person("meera"))
+        .unwrap();
+    let (mirror, _) = git::export(&repo).unwrap();
+    assert_eq!(git(&mirror.dir, &["rev-parse", "spike"]).trim(), main_tip);
+}

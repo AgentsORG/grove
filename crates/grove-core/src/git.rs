@@ -175,7 +175,50 @@ impl GitMirror {
 pub fn export(repo: &Repo) -> Result<(GitMirror, usize)> {
     let mut mirror = GitMirror::open(repo)?;
     let main = repo.main()?;
-    let history = repo.history(&main, None)?;
+    let lanes = repo.refs()?.lanes;
+    let mut history = repo.history(&main, None)?;
+    // lanes become branches: add their landings that aren't on main, then
+    // order everything newest first so parents are written before children
+    let mut seen: std::collections::HashSet<Hash> =
+        history.iter().map(|(h, _)| h.clone()).collect();
+    for head in lanes.values() {
+        for (h, l) in repo.history(head, None)? {
+            if seen.insert(h.clone()) {
+                history.push((h, l));
+            }
+        }
+    }
+    if !lanes.is_empty() {
+        // depth from the root, each landing's parent is in `history` too
+        let parents: std::collections::HashMap<Hash, Option<Hash>> = history
+            .iter()
+            .map(|(h, l)| (h.clone(), l.parent.clone()))
+            .collect();
+        let mut depths: std::collections::HashMap<Hash, usize> = Default::default();
+        for (h, _) in &history {
+            let mut chain = vec![];
+            let mut cur = Some(h.clone());
+            let mut known = None;
+            while let Some(c) = cur.take() {
+                if let Some(d) = depths.get(&c) {
+                    known = Some(*d);
+                    break;
+                }
+                cur = parents.get(&c).cloned().flatten();
+                chain.push(c);
+            }
+            let first = known.map_or(0, |d| d + 1);
+            for (d, c) in (first..).zip(chain.into_iter().rev()) {
+                depths.insert(c, d);
+            }
+        }
+        let mut keyed: Vec<_> = history
+            .into_iter()
+            .map(|(h, l)| (depths[&h], h, l))
+            .collect();
+        keyed.sort_by_key(|k| std::cmp::Reverse(k.0));
+        history = keyed.into_iter().map(|(_, h, l)| (h, l)).collect();
+    }
     let gd = mirror.gd();
     let mut written = 0;
     // An empty first landing (a repository started in an empty folder, or by
@@ -274,6 +317,15 @@ pub fn export(repo: &Repo) -> Result<(GitMirror, usize)> {
         return Ok((mirror, written));
     };
     git(&[&gd, "update-ref", "refs/heads/main", &head], None, &[])?;
+    for (name, h) in &lanes {
+        if let Some(sha) = mirror.map.get(h) {
+            git(
+                &[&gd, "update-ref", &format!("refs/heads/{name}"), sha],
+                None,
+                &[],
+            )?;
+        }
+    }
     // tags on landings that are on main's history
     for (name, h) in &repo.refs()?.tags {
         if let Some(sha) = mirror.map.get(h) {
@@ -299,11 +351,22 @@ pub fn push(repo: &Repo, remote: &str, force: bool) -> Result<String> {
         "main:main",
         "refs/tags/*:refs/tags/*",
     ];
+    let lanes: Vec<String> = repo
+        .refs()?
+        .lanes
+        .keys()
+        .map(|l| format!("refs/heads/{l}:refs/heads/{l}"))
+        .collect();
+    args.extend(lanes.iter().map(String::as_str));
     if force {
         args.push("--force-with-lease");
     }
     git(&args, None, &[])?;
-    Ok(format!("pushed main and tags to {remote}"))
+    Ok(if lanes.is_empty() {
+        format!("pushed main and tags to {remote}")
+    } else {
+        format!("pushed main, {} lane(s) and tags to {remote}", lanes.len())
+    })
 }
 
 /// What `pull` did.
@@ -514,19 +577,120 @@ pub fn import(
             "--quiet",
             &source_git,
             "+HEAD:refs/imported/head",
+            "+refs/heads/*:refs/imported/heads/*",
         ],
         None,
         &[],
     )?;
     let mut count = 0;
-    for (sha, author, at, subject) in &commits {
+    let mut landing_of: std::collections::HashMap<String, Hash> = Default::default();
+    count += import_chain(&repo, &mut mirror, None, &commits, &mut landing_of)?;
+
+    // other branches become lanes, from where they left HEAD's history
+    let current = git(
+        &["symbolic-ref", "-q", "--short", "HEAD"],
+        Some(&source),
+        &[],
+    )
+    .map(|s| s.trim().to_string())
+    .unwrap_or_default();
+    let branches = git(
+        &["for-each-ref", "--format=%(refname:short)", "refs/heads"],
+        Some(&source),
+        &[],
+    )?;
+    for branch in branches
+        .lines()
+        .map(str::trim)
+        .filter(|b| !b.is_empty() && *b != current)
+    {
+        let tip = format!("refs/heads/{branch}");
+        // already part of HEAD's history: nothing of its own to keep
+        if git(
+            &["merge-base", "--is-ancestor", &tip, "HEAD"],
+            Some(&source),
+            &[],
+        )
+        .is_ok()
+        {
+            continue;
+        }
+        let Ok(fork) = git(&["merge-base", "HEAD", &tip], Some(&source), &[]) else {
+            continue; // unrelated history
+        };
+        let Some(start) = landing_of.get(fork.trim()).cloned() else {
+            continue; // forked before the imported range
+        };
+        let lane = if branch == "main" {
+            "git-main".to_string()
+        } else {
+            branch.to_string()
+        };
+        repo.transact("lane", &importer.to_string(), |refs| {
+            refs.lanes.insert(lane.clone(), start.clone());
+            Ok(((), format!("lane {lane} from git branch {branch}")))
+        })?;
+        let range = format!("{}..{tip}", fork.trim());
+        let log = git(
+            &[
+                "log",
+                "--first-parent",
+                "--reverse",
+                "--format=%H%x1f%an%x1f%at%x1f%s",
+                &range,
+            ],
+            Some(&source),
+            &[],
+        )?;
+        let chain = parse_log(&log);
+        count += import_chain(&repo, &mut mirror, Some(&lane), &chain, &mut landing_of)?;
+    }
+    mirror.save()?;
+    repo.reset_workspace(DEFAULT_WORKSPACE, importer)?;
+    Ok((repo, count))
+}
+
+type GitCommit = (String, String, u64, String);
+
+fn parse_log(log: &str) -> Vec<GitCommit> {
+    log.lines()
+        .filter_map(|l| {
+            let mut p = l.split('\u{1f}');
+            Some((
+                p.next()?.to_string(),
+                p.next()?.to_string(),
+                p.next()?.parse().unwrap_or(0),
+                p.next().unwrap_or("").to_string(),
+            ))
+        })
+        .collect()
+}
+
+/// Commit a chain of git commits onto main or a lane, keeping each
+/// original id when Grove reproduces its tree exactly.
+fn import_chain(
+    repo: &Repo,
+    mirror: &mut GitMirror,
+    lane: Option<&str>,
+    commits: &[GitCommit],
+    landing_of: &mut std::collections::HashMap<String, Hash>,
+) -> Result<usize> {
+    let mut count = 0;
+    for (sha, author, at, subject) in commits {
         let work = tree_at(&mirror.dir, sha)?;
         let evidence = vec![Evidence {
             check: "imported from git".into(),
             ok: true,
             detail: sha.clone(),
         }];
-        if let Some(lh) = repo.commit_tree(&work, &Actor::person(author), subject, *at, evidence)? {
+        let landed =
+            repo.commit_tree_on(lane, &work, &Actor::person(author), subject, *at, evidence)?;
+        let here = match &landed {
+            Some(lh) => lh.clone(),
+            None => crate::repo::head(&repo.refs()?, lane)?,
+        };
+        landing_of.insert(sha.clone(), here);
+        if let Some(lh) = landed {
             count += 1;
             // keep the original id when Grove reproduces the tree exactly,
             // and when its parent kept its id too
@@ -546,9 +710,7 @@ pub fn import(
             }
         }
     }
-    mirror.save()?;
-    repo.reset_workspace(DEFAULT_WORKSPACE, importer)?;
-    Ok((repo, count))
+    Ok(count)
 }
 
 /// A commit's files, read from a git object database.

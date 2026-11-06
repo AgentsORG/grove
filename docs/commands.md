@@ -86,9 +86,9 @@ Every command takes `--as WHO` (`agent:codex`, `person:meera`, or a name), `--fo
 | Command | Does |
 |---|---|
 | `grove git export` | Write main as git commits in `.grove/git` |
-| `grove git push URL [--force]` | Export, then push main and tags |
+| `grove git push URL [--force]` | Export, then push main, lanes (as branches) and tags |
 | `grove git pull URL` | Bring in commits made on the git side |
-| `grove git import SRC DEST [--last N]` | A new Grove repository from a git repository's history |
+| `grove git import SRC DEST [--last N]` | A new Grove repository from a git repository's history; other branches become lanes |
 | `grove git pr URL [--change C]` | Push a change as branch `grove/<change>` and open a pull request (GitHub, with `gh`) |
 
 `AT` is a tag, a lane, a landing hash prefix or a change id.

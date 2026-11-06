@@ -449,8 +449,21 @@ impl Repo {
         at: u64,
         evidence: Vec<Evidence>,
     ) -> Result<Option<Hash>> {
+        self.commit_tree_on(None, work, actor, intent, at, evidence)
+    }
+
+    /// Like [`Repo::commit_tree`], on a lane (`Some`) or main (`None`).
+    pub fn commit_tree_on(
+        &self,
+        lane: Option<&str>,
+        work: &Work,
+        actor: &Actor,
+        intent: &str,
+        at: u64,
+        evidence: Vec<Evidence>,
+    ) -> Result<Option<Hash>> {
         self.transact("import", &actor.to_string(), |refs| {
-            let main = refs.main.clone().ok_or_else(|| anyhow!("main is empty"))?;
+            let main = head(refs, lane)?;
             let base = self.view_at(&main)?;
             let ops = diff(&self.store, &base, work);
             if ops.is_empty() {
@@ -486,7 +499,7 @@ impl Repo {
                     at,
                 },
             )?;
-            refs.main = Some(lh.clone());
+            set_head(refs, lane, lh.clone());
             Ok((Some(lh), format!("imported \"{intent}\"")))
         })
     }
