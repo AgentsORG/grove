@@ -32,3 +32,14 @@ grove resolve x_b6b6f3         # close the conflict
 ```
 
 Main never moved while the conflict was open, so nothing anyone else was doing was blocked.
+
+## Resolved once, resolved for good
+
+When you close a conflict, Grove remembers how it was resolved (git's `rerere`). If the very same clash happens again (on a lane, after an undo, in a replayed pull), it resolves itself, and the landing says so: `grove: reused a resolution`.
+
+## Notes
+
+```bash
+grove note c_c7e86c "Measured on staging: p95 down 40 ms"
+grove show c_c7e86c      # notes, approvals and the signature are listed with the change
+```

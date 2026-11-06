@@ -434,6 +434,7 @@ pub fn pull(repo: &Repo, remote: &str, actor: &Actor) -> Result<Pulled> {
             ops,
             created: at,
             previous: None,
+            signature: None,
         };
         repo.stage(&change, actor)?;
         match repo.land_on(None, DEFAULT_WORKSPACE, Some(&change.id), actor)? {
@@ -607,4 +608,138 @@ fn tree_at(git_dir: &Path, sha: &str) -> Result<Work> {
 
 fn ignored_path(path: &str) -> bool {
     path == "zero.graph" || path.ends_with("/zero.graph") || path.starts_with(".zero/")
+}
+
+/// Where `pr` put a change.
+#[derive(Debug)]
+pub struct PullRequest {
+    pub branch: String,
+    pub commit: String,
+    /// The pull request's URL, when the GitHub CLI opened one.
+    pub url: Option<String>,
+}
+
+/// Owner and repository from a GitHub remote URL.
+pub fn github_repo(url: &str) -> Option<String> {
+    let rest = url
+        .strip_prefix("git@github.com:")
+        .or_else(|| url.strip_prefix("https://github.com/"))
+        .or_else(|| url.strip_prefix("ssh://git@github.com/"))?;
+    let rest = rest.trim_end_matches('/').trim_end_matches(".git");
+    (rest.split('/').count() == 2).then(|| rest.to_string())
+}
+
+/// Send a change to a git host for review: a commit on top of its base's
+/// commit, pushed as branch `grove/<change>`, and a pull request opened with
+/// the GitHub CLI (`gh`) when the remote is on GitHub and `gh` is installed.
+pub fn pr(repo: &Repo, remote: &str, change: &Change) -> Result<PullRequest> {
+    let (mirror, _) = export(repo)?;
+    let gd = mirror.gd();
+    let parent = mirror.map.get(&change.base).cloned().ok_or_else(|| {
+        anyhow!("the change's base isn't on main's exported history; sync and record it again")
+    })?;
+    let mut view = repo.view_at(&change.base)?;
+    view.apply(&repo.store, &change.ops, &[])
+        .map_err(|e| anyhow!(e))?;
+    let tree = mirror.tree_of(&view, &change.id)?;
+    let mut message = format!(
+        "{}\n\nGrove-Change: {} v{}\n",
+        change.intent, change.id, change.version
+    );
+    if change.actor.kind == ActorKind::Agent {
+        message.push_str(&format!("Grove-Agent: {}\n", change.actor.name));
+    }
+    if let Some(p) = &change.actor.for_person {
+        message.push_str(&format!("Grove-For: {p}\n"));
+    }
+    let date = format!("{} +0000", change.created);
+    let mut child = Command::new("git")
+        .args([
+            gd.as_str(),
+            "commit-tree",
+            tree.as_str(),
+            "-p",
+            parent.as_str(),
+        ])
+        .env("GIT_AUTHOR_NAME", &change.actor.name)
+        .env("GIT_AUTHOR_EMAIL", email_for(&change.actor))
+        .env("GIT_AUTHOR_DATE", &date)
+        .env("GIT_COMMITTER_NAME", "Grove")
+        .env("GIT_COMMITTER_EMAIL", "grove@agents.grove")
+        .env("GIT_COMMITTER_DATE", &date)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    child.stdin.take().unwrap().write_all(message.as_bytes())?;
+    let out = child.wait_with_output()?;
+    if !out.status.success() {
+        bail!(
+            "git commit-tree failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    let commit = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let branch = format!("grove/{}", change.id);
+    git(
+        &[
+            &gd,
+            "push",
+            "--quiet",
+            "--force",
+            remote,
+            &format!("{commit}:refs/heads/{branch}"),
+        ],
+        None,
+        &[],
+    )?;
+    // keep main in step so the pull request's base exists
+    git(&[&gd, "push", "--quiet", remote, "main:main"], None, &[])?;
+
+    let url = match github_repo(remote) {
+        Some(gh_repo)
+            if Command::new("gh")
+                .arg("--version")
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false) =>
+        {
+            let body = format!(
+                "{}\n\n---\nOpened by Grove from change `{}` v{}, made by {}.",
+                change.intent, change.id, change.version, change.actor
+            );
+            let o = Command::new("gh")
+                .args([
+                    "pr",
+                    "create",
+                    "--repo",
+                    &gh_repo,
+                    "--head",
+                    &branch,
+                    "--base",
+                    "main",
+                    "--title",
+                    &change.intent,
+                    "--body",
+                    &body,
+                ])
+                .output()?;
+            if !o.status.success() {
+                bail!(
+                    "gh pr create failed: {}",
+                    String::from_utf8_lossy(&o.stderr).trim()
+                );
+            }
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .last()
+                .map(str::to_string)
+        }
+        _ => None,
+    };
+    Ok(PullRequest {
+        branch,
+        commit,
+        url,
+    })
 }

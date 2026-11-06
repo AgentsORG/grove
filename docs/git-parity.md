@@ -18,7 +18,7 @@ The rule while anything is 🔜: **you can still do it with git**, because `grov
 | Binary files | ✅ byte for byte |
 | Tags | ✅ exported and pushed |
 | Side branches of merge commits on import | 🔜 imported as lanes |
-| Pull requests: open one from a Grove change | 🔜 through the hosts' APIs |
+| Pull requests: open one from a Grove change | ✅ `grove git pr <url>` (opens it on GitHub with `gh`) |
 | Git LFS and submodules | 🔜 kept as ordinary files today |
 
 ## Main porcelain
@@ -49,7 +49,7 @@ The rule while anything is 🔜: **you can still do it with git**, because `grov
 | `remote` | `grove remote add\|list` | ✅ |
 | `bisect` | `grove bisect --run <cmd> [--good <at>]` | ✅ |
 | `range-diff` | `grove evolve <change>` (every version of a change) | ✅ |
-| `notes` | notes on changes | 🔜 |
+| `notes` | `grove note <change> "text"` | ✅ |
 | `submodule` | pinned references to other repositories | 🔜 |
 | `sparse-checkout`, `backfill` | partial, lazy workspaces | 🔜 |
 | `archive`, `bundle` | `grove git export`, then `git archive` / `git bundle` | 🔁 |
@@ -66,12 +66,13 @@ The rule while anything is 🔜: **you can still do it with git**, because `grov
 | `config` | `.grove/config.json` (checks, remotes) | ✅ |
 | `reflog` | `grove ops`, with `grove undo` | ✅ |
 | `fsck`, `count-objects` | `grove verify` | ✅ |
-| `verify-commit`, `verify-tag` | signed changes and tags | 🔜 |
-| `rerere` | remembered conflict resolutions | 🔜 |
+| `verify-commit` | signed changes: `grove key new`, `grove key trust`, verified at every landing and in `grove show` | ✅ |
+| `verify-tag` | signed tags | 🔜 |
+| `rerere` | remembered resolutions: closing a conflict teaches Grove its answer | ✅ |
 | `mergetool`, `difftool` | `grove conflicts <id>` shows base, main and yours | ✅ |
 | `show-branch`, `cherry`, `merge-tree` | `grove lane list`, `grove drafts`, `grove log` | ✅ |
 | `refs`, `pack-refs`, `replace` | `.grove/refs.json`, one atomic file | ➖ |
-| `request-pull` | through the hosts' APIs | 🔜 |
+| `request-pull` | `grove git pr` | ✅ |
 | `fast-export`, `fast-import`, `filter-branch` | `grove git export` / `grove git import` | ✅ |
 | `help`, `version`, `bugreport`, `diagnose` | `grove --help`, `grove --version` | ✅ |
 | `instaweb`, `gitweb` | GroveHub | 🔜 |

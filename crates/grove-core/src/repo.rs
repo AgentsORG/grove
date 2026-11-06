@@ -51,6 +51,12 @@ pub struct Refs {
     /// Edits put aside (git's stash), by name.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub shelves: BTreeMap<String, Hash>,
+    /// People's approvals, by change.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub approvals: BTreeMap<ChangeId, Vec<crate::trust::Approval>>,
+    /// Notes on changes (git's notes), by change.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub notes: BTreeMap<ChangeId, Vec<Hash>>,
 }
 
 /// The head a workspace lands on: its lane's, or main's.
@@ -96,6 +102,12 @@ pub struct Config {
     /// Named remotes: a GroveHub URL or another repository's folder.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub remotes: BTreeMap<String, String>,
+    /// Trusted public keys, by actor (`agent:codex`, `person:meera`).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub keys: BTreeMap<String, String>,
+    /// What needs a person before it lands.
+    #[serde(default)]
+    pub review: crate::trust::Review,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -442,6 +454,7 @@ impl Repo {
                 footprint,
                 created: at,
                 previous: None,
+                signature: None,
             };
             let ch = self.store.put_json("change", &change)?;
             let snapshot = self.store.put_json("snapshot", &after.save(&self.store)?)?;
@@ -515,7 +528,10 @@ impl Repo {
                 footprint,
                 created: now(),
                 previous,
+                signature: None,
             };
+            let mut change = change;
+            crate::trust::sign(&mut change);
             let h = self.store.put_json("change", &change)?;
             refs.drafts.insert(id.clone(), h);
             refs.workspaces.get_mut(ws).unwrap().draft = Some(id.clone());
@@ -582,13 +598,20 @@ impl Repo {
             // Both sides changed the same declaration on different lines:
             // merge inside it, the way a person would.
             let mut merged: BTreeMap<DeclId, String> = BTreeMap::new();
+            let mut reused: Vec<String> = vec![];
             for d in clash.clone() {
                 if let (Some(b), Some(m), Some(y)) = (
                     base_view.decls.get(&d),
                     main_view.decls.get(&d),
                     mine.decls.get(&d),
                 ) {
-                    if let Some(text) = crate::textdiff::merge3(&b.source, &m.source, &y.source) {
+                    if let Some(text) = self.resolution(&b.source, &m.source, &y.source) {
+                        reused.push(m.entry.name.clone());
+                        merged.insert(d.clone(), text);
+                        clash.remove(&d);
+                    } else if let Some(text) =
+                        crate::textdiff::merge3(&b.source, &m.source, &y.source)
+                    {
                         merged.insert(d.clone(), text);
                         clash.remove(&d);
                     }
@@ -707,7 +730,84 @@ impl Repo {
                 LandMode::Direct
             };
 
-            let mut evidence = run_checks(&view, &config.checks)?;
+            // Signatures and review rules come before any check runs.
+            let mut gate = vec![];
+            match crate::trust::verify(&change, &config.keys) {
+                crate::trust::SigStatus::Invalid => gate.push(Evidence {
+                    check: "signature".into(),
+                    ok: false,
+                    detail: "the change was altered after it was signed".into(),
+                }),
+                crate::trust::SigStatus::Valid { trusted, key } => gate.push(Evidence {
+                    check: "signature".into(),
+                    ok: trusted || !config.review.require_signed,
+                    detail: format!(
+                        "{} key {}",
+                        if trusted { "trusted" } else { "untrusted" },
+                        &key[..12]
+                    ),
+                }),
+                crate::trust::SigStatus::Unsigned if config.review.require_signed => {
+                    gate.push(Evidence {
+                        check: "signature".into(),
+                        ok: false,
+                        detail: "this repository needs signed changes (grove key new)".into(),
+                    })
+                }
+                crate::trust::SigStatus::Unsigned => {}
+            }
+            let why = crate::trust::reasons(&change, &main_view, &view, &config.review);
+            if !why.is_empty() {
+                let approved: Vec<String> = refs
+                    .approvals
+                    .get(&id)
+                    .map(|v| {
+                        v.iter()
+                            .filter(|a| a.version == change.version)
+                            .filter(|a| {
+                                crate::trust::approval_counts(
+                                    &id,
+                                    a,
+                                    &config.keys,
+                                    config.review.require_signed,
+                                )
+                            })
+                            .map(|a| a.by.name.clone())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                gate.push(if approved.is_empty() {
+                    Evidence {
+                        check: "review: needs a person".into(),
+                        ok: false,
+                        detail: why.join("; "),
+                    }
+                } else {
+                    Evidence {
+                        check: "review".into(),
+                        ok: true,
+                        detail: format!("approved by {} ({})", approved.join(", "), why.join("; ")),
+                    }
+                });
+            }
+            if gate.iter().any(|e| !e.ok) {
+                return Ok((
+                    LandOutcome::Rejected {
+                        change,
+                        evidence: gate,
+                    },
+                    String::new(),
+                ));
+            }
+            let mut evidence = gate;
+            evidence.extend(run_checks(&view, &config.checks)?);
+            if !reused.is_empty() {
+                evidence.push(Evidence {
+                    check: "grove: reused a resolution".into(),
+                    ok: true,
+                    detail: reused.join(", "),
+                });
+            }
             if !merged.is_empty() {
                 let names: Vec<String> = merged
                     .keys()
@@ -919,7 +1019,8 @@ impl Repo {
     /// Close a conflict once it has been resolved (by landing a new version
     /// of the change, or by dropping it).
     pub fn close_conflict(&self, prefix: &str, actor: &Actor) -> Result<String> {
-        let (id, _) = self.conflict(prefix)?;
+        let (id, conflict) = self.conflict(prefix)?;
+        self.remember_resolution(&conflict)?;
         self.transact("resolve", &actor.to_string(), |refs| {
             refs.conflicts.remove(&id);
             Ok((
@@ -945,7 +1046,7 @@ impl Repo {
                     .map(|s| s.to_string_lossy().to_string())
                     .unwrap_or_default()
             );
-            let ok = ["decl", "snapshot", "change", "landing", "conflict"]
+            let ok = ["decl", "snapshot", "change", "landing", "conflict", "note"]
                 .iter()
                 .any(|d| Hash::of(d, &bytes).hex() == name);
             if !ok {

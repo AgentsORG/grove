@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.2.0] - 2026-11-06
+
+People stay in charge, and nothing is done twice.
+
+### Added
+
+- **Signed changes.** `grove key new` makes an ed25519 key for a person or an agent; changes are signed when they're recorded, and `grove key trust` lists a key in the repository. Every landing verifies the signature (a change altered after signing never lands), and `review.require_signed` refuses unsigned work.
+- **Review rules and approvals.** Turn on what needs a person: a public signature changed, new file, network, process or HTTP access, a heavily linked declaration rewritten, or a protected path. `grove approve` records a person's yes to one version of a change; agents can't approve, nobody approves their own change, and a new version needs a new approval. Approvals are signed; with `review.require_signed`, only approvals signed by a trusted person's key count.
+- **Remembered resolutions.** Closing a conflict teaches Grove its answer; the same clash resolves itself next time (git's rerere).
+- **Notes** on changes (`grove note`), shown with `grove show`.
+- **Presence**: `grove who` lists who is working on what in every workspace.
+- **Pull requests**: `grove git pr` pushes a change as a `grove/<change>` branch and opens a pull request on GitHub with `gh`.
+- `grove show` lists the signature, approvals and notes.
+
+### Changed
+
+- A refused landing says why in words: a failed check, a missing approval, or an untrusted signature.
+
 ## [0.1.0] - 2026-11-06
 
 The first release of Grove: source control for people and agents, with one graph underneath.
@@ -36,4 +54,5 @@ The first release of Grove: source control for people and agents, with one graph
 
 - One-line installers for macOS, Linux and Windows, prebuilt binaries for x86_64 and arm64, and an agent skill: `npx skills add AgentsORG/grove`.
 
+[0.2.0]: https://github.com/AgentsORG/grove/releases/tag/v0.2.0
 [0.1.0]: https://github.com/AgentsORG/grove/releases/tag/v0.1.0

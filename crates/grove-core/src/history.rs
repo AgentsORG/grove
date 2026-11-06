@@ -57,6 +57,9 @@ fn shell(cmd: &str, dir: &Path) -> bool {
 impl Repo {
     /// Store a change as a draft, outside any workspace.
     pub fn stage(&self, change: &Change, actor: &Actor) -> Result<Hash> {
+        let mut change = change.clone();
+        crate::trust::sign(&mut change);
+        let change = &change;
         self.transact("stage", &actor.to_string(), |refs| {
             let h = self.store.put_json("change", change)?;
             refs.drafts.insert(change.id.clone(), h.clone());
@@ -179,6 +182,7 @@ impl Repo {
             ops,
             created: now(),
             previous: None,
+            signature: None,
         };
         self.stage(&change, actor)?;
         self.land(ws, Some(&change.id), actor)
@@ -231,6 +235,7 @@ impl Repo {
             footprint: c.footprint.clone(),
             created: now(),
             previous: None,
+            signature: None,
         };
         self.stage(&change, actor)?;
         self.land(ws, Some(&change.id), actor)
@@ -314,6 +319,7 @@ impl Repo {
                 ops: ops.clone(),
                 created: now(),
                 previous: None,
+                signature: None,
             };
             refs.shelves
                 .insert(name.into(), self.store.put_json("change", &change)?);
@@ -485,6 +491,7 @@ impl Repo {
             ops,
             created: now(),
             previous: None,
+            signature: None,
         };
         self.stage(&change, actor)?;
         self.land_on(None, DEFAULT_WORKSPACE, Some(&change.id), actor)

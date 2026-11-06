@@ -205,6 +205,9 @@ pub struct Change {
     /// compared (`grove evolve`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub previous: Option<Hash>,
+    /// The actor's signature over everything else in the change.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<crate::trust::Signature>,
 }
 
 /// One check's result, kept with the landing it judged.

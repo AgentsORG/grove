@@ -59,6 +59,12 @@ Use `--json` on any command for machine-readable output.
 - `grove find <text>`, `grove graph --json`: search main, or read the program graph.
 - `grove evolve <change>`: every version of a change.
 
+## Keys and approvals
+
+- `grove key new` once per agent identity: your changes are then signed. The person you work for trusts it with `grove key trust`.
+- Agents never approve. When `grove land` says a change needs a person's approval, tell the person you work for and wait; don't work around it.
+- `grove who` shows who is working on what, so you don't duplicate someone's work.
+
 ## Undo and the other tools
 
 - `grove undo`: undo the last operation (a land, a record, a sync). `grove ops` lists them.
@@ -66,6 +72,8 @@ Use `--json` on any command for machine-readable output.
 - `grove revert <change>`: undo a landed change as a new change. `grove pick <change>`: apply one from elsewhere.
 - `grove lane new|use|land <name>`: longer work beside main. `grove tag <name>`: name a release.
 - `grove bisect --run "<test command>"`: find the landing that broke something.
+- `grove note <change> "text"`: leave a note on a change.
+- `grove git pr <url>`: open a pull request on GitHub from your change (only when asked).
 
 ## Rules
 

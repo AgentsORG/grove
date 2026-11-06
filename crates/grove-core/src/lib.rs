@@ -16,6 +16,7 @@
 //! - Every operation is in an **operation log** and can be undone.
 
 pub mod check;
+pub mod collab;
 pub mod diff;
 pub mod git;
 pub mod graph;
@@ -28,6 +29,7 @@ pub mod shell;
 pub mod source;
 pub mod store;
 pub mod textdiff;
+pub mod trust;
 pub mod workdir;
 
 pub use check::CheckSpec;

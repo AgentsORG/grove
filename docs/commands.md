@@ -52,6 +52,18 @@ Every command takes `--as WHO` (`agent:codex`, `person:meera`, or a name), `--fo
 | `grove lane land NAME` | Land a lane's work on main as one change |
 | `grove lane list`, `grove lane drop NAME` | List and delete lanes |
 
+## Trust and review
+
+| Command | Does |
+|---|---|
+| `grove key new` | Make a signing key for whoever is acting (kept in `~/.grove/keys`) |
+| `grove key show` | Print your public key |
+| `grove key trust` | Trust your key in this repository |
+| `grove approve CHANGE` | Approve a draft's current version (people only, not your own change) |
+| `grove config [KEY VALUE]` | Review rules: `review.signature`, `review.capabilities`, `review.hot_links`, `review.protected`, `review.require_signed` |
+| `grove note CHANGE "text"` | A note on a change |
+| `grove who` | Who is working on what, in every workspace |
+
 ## Conflicts and integrity
 
 | Command | Does |
@@ -77,5 +89,6 @@ Every command takes `--as WHO` (`agent:codex`, `person:meera`, or a name), `--fo
 | `grove git push URL [--force]` | Export, then push main and tags |
 | `grove git pull URL` | Bring in commits made on the git side |
 | `grove git import SRC DEST [--last N]` | A new Grove repository from a git repository's history |
+| `grove git pr URL [--change C]` | Push a change as branch `grove/<change>` and open a pull request (GitHub, with `gh`) |
 
 `AT` is a tag, a lane, a landing hash prefix or a change id.

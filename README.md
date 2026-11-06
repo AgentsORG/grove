@@ -125,8 +125,9 @@ grove git import ~/code/old-repo ./acme-api      # any git history, original com
 | `undo`, `ops`, `restore`, `shelve`, `revert`, `pick` | Undo and move work |
 | `lane`, `tag`, `bisect` | Branches, releases, finding what broke |
 | `conflicts`, `resolve`, `verify` | Conflicts and integrity |
+| `key`, `approve`, `config`, `note`, `who` | Signatures, review rules, notes, presence |
 | `remote`, `fetch`, `pull`, `push` | Between Grove repositories and GroveHub |
-| `git export\|push\|pull\|import` | Between Grove and git |
+| `git export\|push\|pull\|import\|pr` | Between Grove and git, including pull requests |
 
 All of them: [docs/commands.md](docs/commands.md). `--as`, `--for` and `--json` work everywhere.
 

@@ -164,10 +164,34 @@ enum Cmd {
         #[arg(long)]
         good: Option<String>,
     },
+    /// Your signing key: make one, show it, or trust it in this repository.
+    #[command(subcommand)]
+    Key(KeyCmd),
+    /// Approve a draft (people only), for the review rules.
+    Approve { change: String },
+    /// Add a note to a change.
+    Note { change: String, text: String },
+    /// Who is working on what, in every workspace.
+    Who,
+    /// Review rules: `grove config review.signature true`. No value prints it.
+    Config {
+        key: Option<String>,
+        value: Option<String>,
+    },
     /// Work with git: export to a git repository, push to GitHub or GitLab,
     /// import a git repository's history.
     #[command(subcommand)]
     Git(GitCmd),
+}
+
+#[derive(Subcommand)]
+enum KeyCmd {
+    /// Make a signing key for whoever is acting (or show the one they have).
+    New,
+    /// Print your public key.
+    Show,
+    /// Trust your key in this repository, so your changes count as signed.
+    Trust,
 }
 
 #[derive(Subcommand)]
@@ -201,6 +225,12 @@ enum GitCmd {
     },
     /// Bring in commits made on a git remote's main (merged when Grove moved too).
     Pull { remote: String },
+    /// Open a pull request on a git host from this workspace's change (or another).
+    Pr {
+        remote: String,
+        #[arg(long)]
+        change: Option<String>,
+    },
     /// Make a new Grove repository from a git repository's history.
     Import {
         source: PathBuf,
@@ -431,9 +461,10 @@ fn run() -> Result<()> {
                 }
                 LandOutcome::Rejected { change, evidence } => {
                     println!(
-                        "Did not land {} \"{}\": a check failed on the combined result.",
+                        "Did not land {} \"{}\": {}",
                         short(&change.id),
-                        change.intent
+                        change.intent,
+                        refusal(&change, &evidence)
                     );
                     for e in evidence.iter().filter(|e| !e.ok) {
                         println!("  FAIL {}\n{}", e.check, indent(&e.detail, "       "));
@@ -507,6 +538,27 @@ fn run() -> Result<()> {
                 println!("  ops");
                 for op in &c.ops {
                     println!("    {}", describe(op, &view));
+                }
+                let config = repo.config()?;
+                let sig = match grove_core::trust::verify(&c, &config.keys) {
+                    grove_core::trust::SigStatus::Unsigned => "unsigned".to_string(),
+                    grove_core::trust::SigStatus::Invalid => {
+                        "INVALID: changed after signing".to_string()
+                    }
+                    grove_core::trust::SigStatus::Valid { trusted, key } => format!(
+                        "{} key {}",
+                        if trusted { "trusted" } else { "untrusted" },
+                        &key[..12]
+                    ),
+                };
+                println!("  signed   {sig}");
+                if let Some(list) = refs.approvals.get(&c.id) {
+                    for a in list {
+                        println!("  approved by {} (v{})", a.by.name, a.version);
+                    }
+                }
+                for n in repo.notes(&c.id)? {
+                    println!("  note     {}: {}", n.by, n.text);
                 }
             }
         }
@@ -910,6 +962,107 @@ fn run() -> Result<()> {
                 );
             }
         }
+        Cmd::Key(KeyCmd::New) => {
+            let k = grove_core::trust::new_key(&actor)?;
+            println!("Signing key for {actor}: {k}");
+            println!("Trust it here with `grove key trust`.");
+        }
+        Cmd::Key(KeyCmd::Show) => match grove_core::trust::public_key(&actor) {
+            Some(k) => println!("{k}"),
+            None => bail!("{actor} has no key yet: `grove key new`"),
+        },
+        Cmd::Key(KeyCmd::Trust) => {
+            let k = grove_core::trust::public_key(&actor)
+                .ok_or_else(|| anyhow::anyhow!("{actor} has no key yet: `grove key new`"))?;
+            let spec = grove_core::trust::actor_spec(&actor);
+            repo.update_config(|c| {
+                c.keys.insert(spec.clone(), k.clone());
+                Ok(())
+            })?;
+            println!("This repository now trusts {spec}'s key {}", &k[..12]);
+        }
+        Cmd::Approve { change } => {
+            let c = repo.approve(&change, &actor)?;
+            println!(
+                "{} approved {} v{} \"{}\"",
+                actor.name,
+                short(&c.id),
+                c.version,
+                c.intent
+            );
+        }
+        Cmd::Note { change, text } => {
+            repo.note(&change, &text, &actor)?;
+            println!("Noted.");
+        }
+        Cmd::Who => {
+            for p in repo.who()? {
+                let who = p.actor.map(|a| a.to_string()).unwrap_or_default();
+                let lane = p.lane.map(|l| format!(" on {l}")).unwrap_or_default();
+                let what = match p.draft {
+                    Some((c, names)) => format!(
+                        "{} \"{}\" writes {}",
+                        short(&c.id),
+                        c.intent,
+                        names.join(", ")
+                    ),
+                    None if p.unrecorded > 0 => format!("{} unrecorded edit(s)", p.unrecorded),
+                    None => "idle".into(),
+                };
+                println!("{:<12} {:<26} {}{}", p.workspace, who, what, lane);
+            }
+        }
+        Cmd::Config { key: None, .. } => {
+            println!("{}", serde_json::to_string_pretty(&repo.config()?)?)
+        }
+        Cmd::Config {
+            key: Some(key),
+            value,
+        } => {
+            let value =
+                value.ok_or_else(|| anyhow::anyhow!("give a value: grove config {key} <value>"))?;
+            let flag = || -> Result<bool> {
+                value
+                    .parse()
+                    .map_err(|_| anyhow::anyhow!("{key} is true or false"))
+            };
+            let c = repo.update_config(|c| {
+                match key.as_str() {
+                    "review.require_signed" => c.review.require_signed = flag()?,
+                    "review.signature" => c.review.signature = flag()?,
+                    "review.capabilities" => c.review.capabilities = flag()?,
+                    "review.hot_links" => c.review.hot_links = if value == "off" { None } else { Some(value.parse()?) },
+                    "review.protected" => c.review.protected = value.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect(),
+                    _ => bail!("unknown setting {key}; try review.require_signed, review.signature, review.capabilities, review.hot_links, review.protected"),
+                }
+                Ok(())
+            })?;
+            println!("{}", serde_json::to_string_pretty(&c.review)?);
+        }
+        Cmd::Git(GitCmd::Pr { remote, change }) => {
+            let c = match change {
+                Some(p) => repo.find_any_change(&p)?,
+                None => {
+                    let id = refs
+                        .workspaces
+                        .get(&ws)
+                        .and_then(|w| w.draft.clone())
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("no draft here: record one with `grove new`")
+                        })?;
+                    repo.change(&refs.drafts[&id])?
+                }
+            };
+            let pr = grove_core::git::pr(&repo, &remote, &c)?;
+            match pr.url {
+                Some(u) => println!("Opened {u}"),
+                None => println!(
+                    "Pushed {} as branch {}. Open a pull request from it on your git host.",
+                    &pr.commit[..10],
+                    pr.branch
+                ),
+            }
+        }
         Cmd::Verify => {
             let (n, bad) = repo.verify()?;
             if bad.is_empty() {
@@ -1009,12 +1162,17 @@ fn report(outcome: LandOutcome, json: bool) -> Result<()> {
         }
         LandOutcome::Rejected { change, evidence } => {
             println!(
-                "Did not land {} \"{}\": a check failed on the combined result.",
+                "Did not land {} \"{}\": {}",
                 short(&change.id),
-                change.intent
+                change.intent,
+                refusal(&change, &evidence)
             );
             for e in evidence.iter().filter(|e| !e.ok) {
-                println!("  FAIL {}", e.check);
+                println!(
+                    "  FAIL {}: {}",
+                    e.check,
+                    e.detail.lines().next().unwrap_or("")
+                );
             }
             std::process::exit(2);
         }
@@ -1038,5 +1196,25 @@ fn report(outcome: LandOutcome, json: bool) -> Result<()> {
             );
             std::process::exit(3);
         }
+    }
+}
+
+/// Why a landing was refused, in words.
+fn refusal(change: &Change, evidence: &[Evidence]) -> String {
+    let failed: Vec<&str> = evidence
+        .iter()
+        .filter(|e| !e.ok)
+        .map(|e| e.check.as_str())
+        .collect();
+    if failed.iter().any(|c| c.starts_with("review")) {
+        format!(
+            "it needs a person's approval first (`grove approve {}`).",
+            short(&change.id)
+        )
+    } else if failed.contains(&"signature") {
+        "its signature isn't one this repository trusts (`grove key new`, `grove key trust`)."
+            .into()
+    } else {
+        "a check failed on the combined result.".into()
     }
 }

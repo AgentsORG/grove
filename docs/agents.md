@@ -19,6 +19,14 @@ export GROVE_FOR=harshit            # the person you're working for
 
 Or `--as` and `--for` on any command. Workspaces remember their owner, so inside your workspace you don't need either.
 
+## Sign your work
+
+```bash
+grove key new     # once per agent identity
+```
+
+Your changes are then signed. Ask the person you work for to trust the key (`grove key trust` run as you, in their repository). Agents can't approve changes; when a land says it needs a person, tell the person you work for and wait.
+
 ## Machine-readable output
 
 Add `--json` to `status`, `new`, `land`, `show` and `graph`:

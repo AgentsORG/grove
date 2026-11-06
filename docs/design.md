@@ -76,8 +76,9 @@ When two changes set the same declaration, Grove runs a line-level three-way mer
 ## Phases
 
 1. **Today (0.1)**: graph store, stable ids, SHA-256, footprints, land, sync, why, undo, merging inside declarations, binary files, revert, pick, lanes, tags, shelves, bisect, remotes, and the two-way git bridge.
-2. **Next**: signed identities and delegation, presence, review rules, a merge queue across machines, pull requests through the git hosts, the GroveHub app.
-3. **Then**: tree-sitter graphs for other languages (inferred edges), exact edges from Zero's own resolver, chunked storage for very large binaries, partial (lazy) workspaces.
+2. **0.2**: signed changes (ed25519), review rules and approvals, remembered resolutions, notes, presence (`grove who`), pull requests through the git hosts.
+3. **Next**: a merge queue across machines, signed tags, the GroveHub app.
+4. **Then**: tree-sitter graphs for other languages (inferred edges), exact edges from Zero's own resolver, chunked storage for very large binaries, partial (lazy) workspaces.
 
 ## Known limits today
 

@@ -20,6 +20,14 @@ Tags are pushed as git tags. Undo in Grove moves git's `main` back on the next p
 
 `grove git export` writes the same history to `.grove/git` without pushing, for any git tool to read.
 
+## Pull requests
+
+```bash
+grove git pr git@github.com:you/acme-api.git
+```
+
+Pushes this workspace's change as branch `grove/<change>` (one commit on top of its base, with Grove trailers) and, when the remote is on GitHub and the GitHub CLI (`gh`) is installed, opens a pull request for it. Elsewhere it pushes the branch and you open the pull request on your host.
+
 ## Pull
 
 ```bash
