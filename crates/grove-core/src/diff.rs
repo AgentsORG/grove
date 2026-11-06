@@ -26,7 +26,11 @@ pub type Work = BTreeMap<String, Vec<Item>>;
 /// the id is taken (an old declaration was renamed away from this name), a
 /// counter is added, also deterministically.
 pub fn decl_id(file: &str, kind: DeclKind, name: &str, taken: &BTreeSet<DeclId>) -> DeclId {
-    let prefix = if kind == DeclKind::File { "f_" } else { "d_" };
+    let prefix = if matches!(kind, DeclKind::File | DeclKind::Binary) {
+        "f_"
+    } else {
+        "d_"
+    };
     let kind = serde_json::to_string(&kind).unwrap_or_default();
     (0u32..)
         .map(|n| {

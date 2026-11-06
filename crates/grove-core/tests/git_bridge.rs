@@ -127,8 +127,123 @@ fn import_turns_git_history_into_changes() {
     assert!(fs::read_to_string(dest.join("main.0"))
         .unwrap()
         .contains("fn b()"));
-    // and the history round-trips back out to git
+    // and the history round-trips back out to git with the very same commits
     let (mirror, written) = git::export(&repo).unwrap();
-    assert_eq!(written, 3);
+    assert_eq!(written, 0, "every imported commit kept its id");
+    assert_eq!(
+        git(&mirror.dir, &["rev-parse", "main"]),
+        git(&src, &["rev-parse", "HEAD"])
+    );
     assert_eq!(git(&mirror.dir, &["show", "main:README.md"]), "# demo\n");
+}
+
+#[test]
+fn binary_files_survive_grove_and_git() {
+    if !has_git() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("r");
+    fs::create_dir_all(&root).unwrap();
+    let png: Vec<u8> = (0u8..=255).chain([0, 0, 137, 80, 78, 71]).collect();
+    fs::write(root.join("logo.png"), &png).unwrap();
+    fs::write(root.join("notes.txt"), "no final newline\r\nkept as is").unwrap();
+    let me = Actor::person("meera");
+    let repo = Repo::init(&root, &me, vec![]).unwrap();
+    assert!(
+        repo.status(DEFAULT_WORKSPACE).unwrap().is_empty(),
+        "a binary file reads back unchanged"
+    );
+    let view = repo.main_view().unwrap();
+    assert_eq!(view.file_bytes()["logo.png"], png);
+    assert_eq!(view.files()["notes.txt"], "no final newline\r\nkept as is");
+    let (mirror, _) = git::export(&repo).unwrap();
+    let out = Command::new("git")
+        .args(["show", "main:logo.png"])
+        .current_dir(&mirror.dir)
+        .output()
+        .unwrap();
+    assert_eq!(out.stdout, png);
+}
+
+#[test]
+fn pull_brings_in_commits_made_on_the_git_side() {
+    if !has_git() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("r");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(
+        root.join("a.0"),
+        "fn a() -> u32 {\n    return 1\n}\n\nfn b() -> u32 {\n    return 2\n}\n",
+    )
+    .unwrap();
+    let me = Actor::person("meera");
+    let repo = Repo::init(&root, &me, vec![]).unwrap();
+    // publish to a bare "GitHub"
+    let hub = tmp.path().join("hub.git");
+    git(
+        tmp.path(),
+        &[
+            "init",
+            "--bare",
+            "--quiet",
+            "--initial-branch=main",
+            hub.to_str().unwrap(),
+        ],
+    );
+    git::push(&repo, hub.to_str().unwrap(), false).unwrap();
+
+    // someone commits on GitHub
+    let clone = tmp.path().join("clone");
+    git(
+        tmp.path(),
+        &[
+            "clone",
+            "--quiet",
+            hub.to_str().unwrap(),
+            clone.to_str().unwrap(),
+        ],
+    );
+    let text = fs::read_to_string(clone.join("a.0")).unwrap();
+    fs::write(clone.join("a.0"), text.replace("return 2", "return 20")).unwrap();
+    git(
+        &clone,
+        &[
+            "-c",
+            "user.name=Dev",
+            "-c",
+            "user.email=d@x",
+            "commit",
+            "--quiet",
+            "-am",
+            "Twenty",
+        ],
+    );
+    git(&clone, &["push", "--quiet", "origin", "main"]);
+
+    // meanwhile Grove's main moves too, on another declaration
+    edit_and_land(&repo, &root, "return 1", "return 10", "Ten");
+
+    let pulled = git::pull(&repo, hub.to_str().unwrap(), &me).unwrap();
+    assert_eq!((pulled.replayed, pulled.conflict.is_none()), (1, true));
+    let main = repo.main_view().unwrap().files()["a.0"].clone();
+    assert!(
+        main.contains("return 10") && main.contains("return 20"),
+        "{main}"
+    );
+    // and pushing again fast-forwards: the git commit is merged, not lost
+    git::push(&repo, hub.to_str().unwrap(), false).unwrap();
+    let log = git(&hub, &["log", "--format=%s", "main"]);
+    assert!(log.contains("Twenty") && log.contains("Ten"), "{log}");
+}
+
+fn edit_and_land(repo: &Repo, root: &std::path::Path, from: &str, to: &str, intent: &str) {
+    let p = root.join("a.0");
+    let text = fs::read_to_string(&p).unwrap();
+    fs::write(&p, text.replacen(from, to, 1)).unwrap();
+    let me = Actor::person("meera");
+    repo.record(DEFAULT_WORKSPACE, intent, &me).unwrap();
+    repo.land(DEFAULT_WORKSPACE, None, &me).unwrap();
 }

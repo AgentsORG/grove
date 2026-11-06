@@ -22,7 +22,7 @@ pub struct Node {
 
 impl Node {
     pub fn is_code(&self) -> bool {
-        self.entry.kind != DeclKind::File
+        !matches!(self.entry.kind, DeclKind::File | DeclKind::Binary)
     }
 }
 
@@ -216,6 +216,27 @@ impl View {
             .collect()
     }
 
+    /// Every file's bytes, as they go on disk: binary files decoded.
+    pub fn file_bytes(&self) -> BTreeMap<String, Vec<u8>> {
+        let binary: BTreeSet<&str> = self
+            .decls
+            .values()
+            .filter(|n| n.entry.kind == DeclKind::Binary)
+            .map(|n| n.entry.file.as_str())
+            .collect();
+        self.files()
+            .into_iter()
+            .map(|(f, text)| {
+                let bytes = if binary.contains(f.as_str()) {
+                    crate::source::decode_binary(&text)
+                } else {
+                    text.into_bytes()
+                };
+                (f, bytes)
+            })
+            .collect()
+    }
+
     /// Apply ops in order. `landed` are renames that reached main after the
     /// ops were written: they are applied to the incoming source too, so an
     /// edit written against the old name still lands correctly. Returns the
@@ -257,7 +278,7 @@ impl View {
                     if self.decls.contains_key(id) {
                         return Err(ApplyError::Exists { id: id.clone() });
                     }
-                    let code = *kind != DeclKind::File;
+                    let code = !matches!(*kind, DeclKind::File | DeclKind::Binary);
                     let source = carry(source, code);
                     let name = if code {
                         classify(&source).0

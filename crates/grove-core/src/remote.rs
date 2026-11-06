@@ -497,6 +497,7 @@ impl Repo {
                     base: main.clone(),
                     actor: Some(actor.clone()),
                     draft: None,
+                    lane: None,
                 },
             );
             materialize(&root, &repo.view_at(&main)?, None)?;

@@ -27,7 +27,7 @@ The rule while parity is incomplete: **anything Grove can't do yet, you can stil
 | git | Grove | Status |
 |---|---|---|
 | `init` | `grove init` | ✅ |
-| `clone` | `grove workspace add` (local); `grove clone` from a server | ✅ local · 🔜 phase 2 remote |
+| `clone` | `grove workspace add` (local); `grove clone URL` from GroveHub or a folder | ✅ |
 | `add`, `stage` | not needed: edits are read from the working copy when you record | ➖ by design |
 | `status` | `grove status` | ✅ |
 | `commit` | `grove new "<intent>"` | ✅ |
@@ -46,8 +46,8 @@ The rule while parity is incomplete: **anything Grove can't do yet, you can stil
 | `reset` | `grove undo`; `grove restore` | ✅ undo · 🔜 restore |
 | `stash` | recorded drafts; `grove shelve` | ✅ drafts · 🔜 shelve |
 | `tag`, `describe` | signed tags pinned to a landing | 🔜 phase 2 |
-| `fetch`, `pull`, `push` | `grove git push` today; `grove sync` with a server in phase 2 | ✅ to git hosts · 🔜 Grove server |
-| `remote` | `grove git push <url>`; named remotes | ✅ by URL · 🔜 named |
+| `fetch`, `pull`, `push` | `grove fetch`, `grove pull`, `grove push [--review]` to GroveHub or a folder; `grove git push` to git hosts | ✅ fast-forward and change pushes · 🔜 diverged mains |
+| `remote` | `grove remote add/list` | ✅ |
 | `bisect` | `grove bisect`, reusing recorded evidence | 🔜 phase 1.x |
 | `range-diff` | `grove evolve <change>` (versions of one change) | 🔜 (versions are already stored) |
 | `notes` | notes on changes | 🔜 phase 2 |
@@ -89,4 +89,4 @@ git's plumbing (`cat-file`, `hash-object`, `ls-tree`, `update-ref`, `rev-parse`,
 
 ## Protocols and servers
 
-`daemon`, `http-backend`, `upload-pack`, `receive-pack`, `shell`: 🔜 phase 2. The Grove server speaks its own API for graph queries and landing, and serves git over the bridge so existing clients keep working.
+`daemon`, `http-backend`, `upload-pack`, `receive-pack`, `shell`: GroveHub speaks Grove's remote protocol (`grove_core::remote`: fetch objects, fast-forward main, propose a change for the server to land) over HTTP, and serves each repository's git mirror over git's dumb HTTP protocol so `git clone` works. Smart HTTP and accepting git pushes: 🔜.

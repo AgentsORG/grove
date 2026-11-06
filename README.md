@@ -95,6 +95,9 @@ pushed main to git@github.com:you/acme-api.git
 | `grove new "<intent>"` | Record the edits as a change; record again for a new version |
 | `grove land [CHANGE]` | Replay, order, check, land |
 | `grove sync` | Bring this workspace up to main, keeping your own edits |
+| `grove remote add NAME URL`, `grove clone URL [DIR]` | Remotes: a GroveHub repository or another repository's folder |
+| `grove fetch`, `grove pull` | Get what's new on a remote; move main and sync this workspace |
+| `grove push [--review]` | Send landings the remote lacks, then this workspace's change, which the remote lands (or keeps open for review) |
 | `grove log`, `grove show C`, `grove why NAME [--all]` | History and who changed what, and why |
 | `grove cat FILE`, `grove graph [--dot \| --json]` | Main's files and its program graph |
 | `grove conflicts [ID]`, `grove resolve ID` | Saved conflicts |
@@ -106,7 +109,7 @@ pushed main to git@github.com:you/acme-api.git
 
 ## Status
 
-Early, and honest about it. This is phase 1: one machine, many workspaces, the git bridge. [docs/git-parity.md](docs/git-parity.md) checks every command in git's own command list and says what works today, what's planned, and what isn't needed. The biggest gaps right now are binary files, a server for working across machines, and pull requests through the git hosts. [docs/design.md](docs/design.md) explains how it works and lists its current limits.
+Early, and honest about it. This is phase 1: one machine, many workspaces, the git bridge. [docs/git-parity.md](docs/git-parity.md) checks every command in git's own command list and says what works today, what's planned, and what isn't needed. Remotes work: `grove clone`, `pull` and `push` talk to another folder or a GroveHub server, which lands changes with the same engine. The biggest gaps right now are binary files, signed identities, and pull requests through the git hosts. [docs/design.md](docs/design.md) explains how it works and lists its current limits.
 
 ## Contributing
 

@@ -116,10 +116,76 @@ enum Cmd {
         #[arg(long)]
         review: bool,
     },
+    /// A git-style text diff: this workspace's unrecorded edits, or a change.
+    Diff { change: Option<String> },
+    /// Undo what a landed change did, as a new change.
+    Revert { change: String },
+    /// Apply a change from anywhere (a lane, an undone landing) here.
+    Pick { change: String },
+    /// Throw away unrecorded edits: to these files, or all of them.
+    Restore { paths: Vec<String> },
+    /// Put unrecorded edits aside under a name.
+    Shelve {
+        #[arg(default_value = "wip")]
+        name: String,
+    },
+    /// Bring shelved edits back.
+    Unshelve {
+        #[arg(default_value = "wip")]
+        name: String,
+    },
+    /// Shelved edits.
+    Shelves,
+    /// Name a landing (a release). Without a name, list tags.
+    Tag {
+        name: Option<String>,
+        /// The landing, change or tag to name (default: main).
+        #[arg(long)]
+        at: Option<String>,
+        /// Remove the tag instead.
+        #[arg(long)]
+        delete: bool,
+    },
+    /// Lanes: named lines of work beside main (git's branches).
+    #[command(subcommand)]
+    Lane(LaneCmd),
+    /// Lines on main containing some text.
+    Find { query: String },
+    /// Every version of a change.
+    Evolve { change: String },
+    /// Landed changes per person and agent.
+    Shortlog,
+    /// Find the landing where a command started failing.
+    Bisect {
+        /// The test: exits 0 when good.
+        #[arg(long)]
+        run: String,
+        /// A landing, change or tag where it passed (default: the first).
+        #[arg(long)]
+        good: Option<String>,
+    },
     /// Work with git: export to a git repository, push to GitHub or GitLab,
     /// import a git repository's history.
     #[command(subcommand)]
     Git(GitCmd),
+}
+
+#[derive(Subcommand)]
+enum LaneCmd {
+    /// Start a lane from main (or from a tag or landing).
+    New {
+        name: String,
+        #[arg(long)]
+        from: Option<String>,
+    },
+    /// Point this workspace at a lane; `main` goes back to main.
+    Use { name: String },
+    /// Land a lane's work on main as one change.
+    Land { name: String },
+    /// Lanes and their heads.
+    List,
+    /// Delete a lane.
+    Drop { name: String },
 }
 
 #[derive(Subcommand)]
@@ -133,6 +199,8 @@ enum GitCmd {
         #[arg(long)]
         force: bool,
     },
+    /// Bring in commits made on a git remote's main (merged when Grove moved too).
+    Pull { remote: String },
     /// Make a new Grove repository from a git repository's history.
     Import {
         source: PathBuf,
@@ -710,6 +778,138 @@ fn run() -> Result<()> {
                 }
             }
         }
+        Cmd::Diff { change } => print!("{}", repo.diff_text(&ws, change.as_deref())?),
+        Cmd::Revert { change } => report(repo.revert(&ws, &change, &actor)?, cli.json)?,
+        Cmd::Pick { change } => report(repo.pick(&ws, &change, &actor)?, cli.json)?,
+        Cmd::Restore { paths } => {
+            let done = repo.restore(&ws, &paths)?;
+            if done.is_empty() {
+                println!("Nothing to restore.");
+            } else {
+                println!("Restored {}", done.join(", "));
+            }
+        }
+        Cmd::Shelve { name } => {
+            let n = repo.shelve(&ws, &name, &actor)?;
+            println!("Shelved {n} edit(s) as {name}; the workspace is back at its base.");
+        }
+        Cmd::Unshelve { name } => {
+            let n = repo.unshelve(&ws, &name, &actor)?;
+            println!("Brought back {n} edit(s) from {name}.");
+        }
+        Cmd::Shelves => {
+            for (name, h) in &refs.shelves {
+                let c = repo.change(h)?;
+                println!("{name:<16} {} edit(s) by {}", c.ops.len(), c.actor);
+            }
+        }
+        Cmd::Tag { name: None, .. } => {
+            for (name, h) in &refs.tags {
+                println!("{name:<16} {}", h.short());
+            }
+        }
+        Cmd::Tag {
+            name: Some(name),
+            delete: true,
+            ..
+        } => {
+            repo.untag(&name, &actor)?;
+            println!("Removed tag {name}");
+        }
+        Cmd::Tag {
+            name: Some(name),
+            at,
+            ..
+        } => {
+            let h = repo.tag(&name, at.as_deref(), &actor)?;
+            println!("Tagged {} as {name}", h.short());
+        }
+        Cmd::Lane(LaneCmd::New { name, from }) => {
+            let h = repo.lane_new(&name, from.as_deref(), &actor)?;
+            println!(
+                "Started lane {name} at {}. Work on it with `grove lane use {name}`.",
+                h.short()
+            );
+        }
+        Cmd::Lane(LaneCmd::Use { name }) => {
+            let lane = if name == "main" {
+                None
+            } else {
+                Some(name.as_str())
+            };
+            repo.lane_use(&ws, lane, &actor)?;
+            println!("{ws} now works on {name}.");
+        }
+        Cmd::Lane(LaneCmd::Land { name }) => report(repo.lane_land(&name, &actor)?, cli.json)?,
+        Cmd::Lane(LaneCmd::List) => {
+            println!("  main             {}", repo.main()?.short());
+            for (name, h) in &refs.lanes {
+                let here = if refs.workspaces.get(&ws).and_then(|w| w.lane.as_deref())
+                    == Some(name.as_str())
+                {
+                    "*"
+                } else {
+                    " "
+                };
+                println!("{here} {name:<16} {}", h.short());
+            }
+        }
+        Cmd::Lane(LaneCmd::Drop { name }) => {
+            repo.lane_drop(&name, &actor)?;
+            println!("Dropped lane {name}");
+        }
+        Cmd::Find { query } => {
+            for (file, line, text) in repo.find(&query)? {
+                println!("{file}:{line}: {}", text.trim());
+            }
+        }
+        Cmd::Evolve { change } => {
+            for c in repo.evolve(&change)? {
+                println!(
+                    "v{}  {}  {} op(s)  \"{}\"",
+                    c.version,
+                    short(&c.id),
+                    c.ops.len(),
+                    c.intent
+                );
+            }
+        }
+        Cmd::Shortlog => {
+            for (who, n) in repo.shortlog()? {
+                println!("{n:>5}  {who}");
+            }
+        }
+        Cmd::Bisect { run, good } => {
+            let b = repo.bisect(&run, good.as_deref())?;
+            match b.change {
+                Some(c) => println!(
+                    "First failing landing: {} {} \"{}\" by {} ({} tested)",
+                    b.first_bad.short(),
+                    short(&c.id),
+                    c.intent,
+                    c.actor,
+                    b.tested
+                ),
+                None => println!(
+                    "First failing landing: {} ({} tested)",
+                    b.first_bad.short(),
+                    b.tested
+                ),
+            }
+        }
+        Cmd::Git(GitCmd::Pull { remote }) => {
+            let p = grove_core::git::pull(&repo, &remote, &actor)?;
+            println!(
+                "Pulled from {remote}: {} fast-forward, {} replayed on top of Grove's main.",
+                p.fast_forward, p.replayed
+            );
+            if let Some((sha, why)) = p.conflict {
+                println!(
+                    "Stopped at {}: {why}. Resolve it, then pull again.",
+                    &sha[..sha.len().min(10)]
+                );
+            }
+        }
         Cmd::Verify => {
             let (n, bad) = repo.verify()?;
             if bad.is_empty() {
@@ -769,4 +969,74 @@ fn indent(text: &str, pad: &str) -> String {
         .map(|l| format!("{pad}{l}"))
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// Print what happened when a change tried to land.
+fn report(outcome: LandOutcome, json: bool) -> Result<()> {
+    match outcome {
+        LandOutcome::Landed {
+            change,
+            mode,
+            evidence,
+            ..
+        } => {
+            if json {
+                println!(
+                    "{}",
+                    serde_json::json!({"landed": change.id, "mode": mode, "evidence": evidence})
+                );
+            } else {
+                println!(
+                    "Landed {} \"{}\" ({})",
+                    short(&change.id),
+                    change.intent,
+                    mode_word(&mode)
+                );
+                for e in &evidence {
+                    println!(
+                        "  {} {}{}",
+                        if e.ok { "ok  " } else { "FAIL" },
+                        e.check,
+                        if e.detail.is_empty() {
+                            String::new()
+                        } else {
+                            format!(": {}", e.detail.lines().next().unwrap_or(""))
+                        }
+                    );
+                }
+            }
+            Ok(())
+        }
+        LandOutcome::Rejected { change, evidence } => {
+            println!(
+                "Did not land {} \"{}\": a check failed on the combined result.",
+                short(&change.id),
+                change.intent
+            );
+            for e in evidence.iter().filter(|e| !e.ok) {
+                println!("  FAIL {}", e.check);
+            }
+            std::process::exit(2);
+        }
+        LandOutcome::Conflict {
+            change,
+            id,
+            conflict,
+        } => {
+            println!(
+                "Did not land {} \"{}\": it clashes with work already there.",
+                short(&change.id),
+                change.intent
+            );
+            for d in &conflict.decls {
+                println!("  {}", d.name);
+            }
+            println!(
+                "Saved as conflict {}. See it with `grove conflicts {}`.",
+                short(&id),
+                short(&id)
+            );
+            std::process::exit(3);
+        }
+    }
 }

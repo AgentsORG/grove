@@ -1,20 +1,30 @@
 //! The git bridge.
 //!
 //! GitHub, GitLab, Cursor, CI systems and every editor speak git, so Grove
-//! has to as well. This module turns main's history into ordinary git
-//! commits (one per landing, with who, for whom, why and the evidence in
-//! trailers), and turns a git repository's history into Grove changes.
+//! has to as well. This module:
+//!
+//! - **exports** main's history as ordinary git commits (one per landing,
+//!   with who, for whom, why and the evidence in trailers), plus tags;
+//! - **pushes** that history to any git remote;
+//! - **imports** a git repository's history as Grove changes, reusing the
+//!   original commit ids when the trees match, so an import followed by an
+//!   export gives back the same history;
+//! - **pulls** new commits from a git remote. When Grove's main also moved,
+//!   the commits are replayed like any change and exported as merge commits,
+//!   so the next push fast-forwards instead of being refused.
 //!
 //! It drives the `git` command rather than reimplementing git's formats, so
 //! what it produces is exactly what git itself would.
 
-use crate::diff::Work;
+use crate::diff::{diff, Work};
+use crate::graph::View;
 use crate::hash::Hash;
-use crate::model::{Actor, ActorKind, Evidence};
-use crate::repo::{mode_word, Repo, DEFAULT_WORKSPACE};
-use crate::source::split;
+use crate::model::{fresh_id, now, Actor, ActorKind, Change, Evidence};
+use crate::repo::{footprint, mode_word, LandOutcome, Repo, DEFAULT_WORKSPACE};
+use crate::source::split_bytes;
 use crate::workdir::materialize;
 use anyhow::{anyhow, bail, Context, Result};
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -60,17 +70,30 @@ fn email_for(actor: &Actor) -> String {
     }
 }
 
-/// Where the mirror lives and which landing each commit came from.
+/// What the bridge remembers between runs.
+#[derive(Default, Serialize, Deserialize)]
+struct State {
+    /// Landing -> the git commit that represents it.
+    #[serde(default)]
+    map: BTreeMap<Hash, String>,
+    /// Landing -> a git commit it merged in (from `pull`), exported as a
+    /// second parent.
+    #[serde(default)]
+    merges: BTreeMap<Hash, String>,
+}
+
+/// The bare git repository Grove keeps in step with main.
 pub struct GitMirror {
     pub dir: PathBuf,
-    map_path: PathBuf,
+    state_path: PathBuf,
     pub map: BTreeMap<Hash, String>,
+    merges: BTreeMap<Hash, String>,
 }
 
 impl GitMirror {
     pub fn open(repo: &Repo) -> Result<GitMirror> {
         let dir = repo.dir.join("git");
-        let map_path = repo.dir.join("git-map.json");
+        let state_path = repo.dir.join("git-map.json");
         if !dir.exists() {
             git(
                 &[
@@ -84,62 +107,99 @@ impl GitMirror {
                 &[],
             )?;
         }
-        let map = match std::fs::read(&map_path) {
-            Ok(b) => serde_json::from_slice(&b)?,
-            Err(_) => BTreeMap::new(),
+        let state: State = match std::fs::read(&state_path) {
+            // older versions stored the map alone
+            Ok(b) => serde_json::from_slice::<State>(&b).or_else(|_| {
+                serde_json::from_slice::<BTreeMap<Hash, String>>(&b).map(|map| State {
+                    map,
+                    ..State::default()
+                })
+            })?,
+            Err(_) => State::default(),
         };
-        Ok(GitMirror { dir, map_path, map })
+        Ok(GitMirror {
+            dir,
+            state_path,
+            map: state.map,
+            merges: state.merges,
+        })
     }
 
     fn save(&self) -> Result<()> {
-        crate::store::write_atomic(&self.map_path, &serde_json::to_vec_pretty(&self.map)?)
+        let state = State {
+            map: self.map.clone(),
+            merges: self.merges.clone(),
+        };
+        crate::store::write_atomic(&self.state_path, &serde_json::to_vec_pretty(&state)?)
+    }
+
+    fn gd(&self) -> String {
+        format!("--git-dir={}", self.dir.display())
+    }
+
+    /// The git tree a view would produce.
+    fn tree_of(&self, view: &View, key: &str) -> Result<String> {
+        let gd = self.gd();
+        let tree_dir = std::env::temp_dir().join(fresh_id("grove-tree-", key));
+        std::fs::create_dir_all(&tree_dir)?;
+        materialize(&tree_dir, view, None)?;
+        let wt = format!("--work-tree={}", tree_dir.display());
+        let index = self.dir.join(format!("index-{}", fresh_id("", key)));
+        let env_index = [("GIT_INDEX_FILE", index.to_string_lossy().to_string())];
+        let result = git(
+            &[&gd, &wt, "add", "--all", "."],
+            Some(&tree_dir),
+            &env_index,
+        )
+        .and_then(|_| git(&[&gd, "write-tree"], Some(&tree_dir), &env_index));
+        let _ = std::fs::remove_file(&index);
+        let _ = std::fs::remove_dir_all(&tree_dir);
+        Ok(result?.trim().to_string())
+    }
+
+    fn commit_tree_of(&self, sha: &str) -> Result<String> {
+        Ok(git(
+            &[&self.gd(), "rev-parse", &format!("{sha}^{{tree}}")],
+            None,
+            &[],
+        )?
+        .trim()
+        .to_string())
     }
 }
 
-/// Write every landing not yet exported as a git commit on `main`, then
-/// point `main` at the commit for Grove's current main (so an undo shows up
-/// in git as main moving back). Returns the mirror and how many commits were
-/// written.
+/// Write every landing not yet exported as a git commit on `main`, point
+/// `main` at the commit for Grove's current main (so an undo shows up in git
+/// as main moving back), and write Grove's tags as git tags. Returns the
+/// mirror and how many commits were written.
 pub fn export(repo: &Repo) -> Result<(GitMirror, usize)> {
     let mut mirror = GitMirror::open(repo)?;
     let main = repo.main()?;
     let history = repo.history(&main, None)?;
-    let gd = format!("--git-dir={}", mirror.dir.display());
+    let gd = mirror.gd();
     let mut written = 0;
+    // An empty first landing (a repository started in an empty folder, or by
+    // an import) has nothing to commit; its children become root commits.
+    let empty_root = |h: &Hash| -> bool {
+        repo.landing(h).map(|l| l.parent.is_none()).unwrap_or(false)
+            && repo.view_at(h).map(|v| v.decls.is_empty()).unwrap_or(false)
+    };
     for (h, landing) in history.iter().rev() {
-        if mirror.map.contains_key(h) {
+        if mirror.map.contains_key(h) || empty_root(h) {
             continue;
         }
-        let parent = landing
-            .parent
-            .as_ref()
-            .map(|p| {
+        let parent = match landing.parent.as_ref() {
+            Some(p) if empty_root(p) => None,
+            Some(p) => Some(
                 mirror
                     .map
                     .get(p)
                     .cloned()
-                    .ok_or_else(|| anyhow!("parent {} was not exported", p.short()))
-            })
-            .transpose()?;
-        let view = repo.view_at(h)?;
-        let tree_dir =
-            std::env::temp_dir().join(crate::model::fresh_id("grove-export-", h.as_str()));
-        std::fs::create_dir_all(&tree_dir)?;
-        materialize(&tree_dir, &view, None)?;
-        let wt = format!("--work-tree={}", tree_dir.display());
-        let index = mirror.dir.join(format!("index-{}", std::process::id()));
-        let env_index = [("GIT_INDEX_FILE", index.to_string_lossy().to_string())];
-        let _ = std::fs::remove_file(&index);
-        git(
-            &[&gd, &wt, "add", "--all", "."],
-            Some(&tree_dir),
-            &env_index,
-        )?;
-        let tree = git(&[&gd, "write-tree"], Some(&tree_dir), &env_index)?
-            .trim()
-            .to_string();
-        let _ = std::fs::remove_file(&index);
-        let _ = std::fs::remove_dir_all(&tree_dir);
+                    .ok_or_else(|| anyhow!("parent {} was not exported", p.short()))?,
+            ),
+            None => None,
+        };
+        let tree = mirror.tree_of(&repo.view_at(h)?, h.as_str())?;
 
         let (actor, message) = match &landing.change {
             Some(ch) => {
@@ -182,6 +242,11 @@ pub fn export(repo: &Repo) -> Result<(GitMirror, usize)> {
             args.push("-p");
             args.push(p);
         }
+        let merged = mirror.merges.get(h).cloned();
+        if let Some(m) = &merged {
+            args.push("-p");
+            args.push(m);
+        }
         let mut child = Command::new("git")
             .args(&args)
             .envs(env.iter().map(|(k, v)| (*k, v.as_str())))
@@ -203,31 +268,198 @@ pub fn export(repo: &Repo) -> Result<(GitMirror, usize)> {
         );
         written += 1;
     }
-    let head = mirror
-        .map
-        .get(&main)
-        .ok_or_else(|| anyhow!("main was not exported"))?
-        .clone();
+    let Some(head) = mirror.map.get(&main).cloned() else {
+        // main is still the empty first landing: nothing to export yet
+        mirror.save()?;
+        return Ok((mirror, written));
+    };
     git(&[&gd, "update-ref", "refs/heads/main", &head], None, &[])?;
+    // tags on landings that are on main's history
+    for (name, h) in &repo.refs()?.tags {
+        if let Some(sha) = mirror.map.get(h) {
+            git(
+                &[&gd, "update-ref", &format!("refs/tags/{name}"), sha],
+                None,
+                &[],
+            )?;
+        }
+    }
     mirror.save()?;
     Ok((mirror, written))
 }
 
-/// Push the mirror's `main` to a git remote (GitHub, GitLab, ...).
+/// Push main and tags to a git remote (GitHub, GitLab, ...).
 pub fn push(repo: &Repo, remote: &str, force: bool) -> Result<String> {
     let (mirror, _) = export(repo)?;
-    let gd = format!("--git-dir={}", mirror.dir.display());
-    let mut args = vec![gd.as_str(), "push", remote, "main:main"];
+    let gd = mirror.gd();
+    let mut args = vec![
+        gd.as_str(),
+        "push",
+        remote,
+        "main:main",
+        "refs/tags/*:refs/tags/*",
+    ];
     if force {
         args.push("--force-with-lease");
     }
     git(&args, None, &[])?;
-    Ok(format!("pushed main to {remote}"))
+    Ok(format!("pushed main and tags to {remote}"))
+}
+
+/// What `pull` did.
+#[derive(Debug, Default)]
+pub struct Pulled {
+    /// Commits that became landings directly (Grove's main hadn't moved).
+    pub fast_forward: usize,
+    /// Commits replayed on top of Grove's newer main (merged in git).
+    pub replayed: usize,
+    /// A commit that clashed with Grove's main; nothing after it was taken.
+    pub conflict: Option<(String, String)>,
+}
+
+/// Bring in commits made on a git remote's `main` since the last export or
+/// pull. Fast-forwards when Grove's main hasn't moved; otherwise replays each
+/// commit as a change and records the git merge for the next export.
+pub fn pull(repo: &Repo, remote: &str, actor: &Actor) -> Result<Pulled> {
+    export(repo)?; // make sure every landing has a commit to compare with
+    let mut mirror = GitMirror::open(repo)?;
+    let gd = mirror.gd();
+    git(
+        &[
+            &gd,
+            "fetch",
+            "--quiet",
+            remote,
+            "+refs/heads/main:refs/remotes/upstream/main",
+        ],
+        None,
+        &[],
+    )?;
+    let upstream = git(&[&gd, "rev-parse", "refs/remotes/upstream/main"], None, &[])?
+        .trim()
+        .to_string();
+    let by_commit: BTreeMap<String, Hash> = mirror
+        .map
+        .iter()
+        .map(|(l, c)| (c.clone(), l.clone()))
+        .chain(mirror.merges.iter().map(|(l, c)| (c.clone(), l.clone())))
+        .collect();
+    if by_commit.contains_key(&upstream) {
+        return Ok(Pulled::default());
+    }
+    let mut args = vec![
+        gd.clone(),
+        "rev-list".into(),
+        "--first-parent".into(),
+        "--reverse".into(),
+        "--format=%P%x1f%an%x1f%at%x1f%s".into(),
+        upstream.clone(),
+    ];
+    args.extend(by_commit.keys().map(|c| format!("^{c}")));
+    let argv: Vec<&str> = args.iter().map(String::as_str).collect();
+    let listing = git(&argv, None, &[])?;
+    // rev-list --format prints "commit <sha>" then the formatted line
+    let mut commits = vec![];
+    let mut lines = listing.lines();
+    while let Some(head) = lines.next() {
+        let Some(sha) = head.strip_prefix("commit ") else {
+            continue;
+        };
+        let fmt = lines.next().unwrap_or("");
+        let mut p = fmt.split('\u{1f}');
+        let parents = p
+            .next()
+            .unwrap_or("")
+            .split_whitespace()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        let author = p.next().unwrap_or("someone").to_string();
+        let at: u64 = p.next().and_then(|s| s.parse().ok()).unwrap_or_else(now);
+        let subject = p.next().unwrap_or("").to_string();
+        commits.push((sha.to_string(), parents, author, at, subject));
+    }
+
+    let mut pulled = Pulled::default();
+    let mut known = by_commit;
+    for (sha, parents, author, at, subject) in commits {
+        let parent = parents.first().ok_or_else(|| {
+            anyhow!(
+                "commit {sha} has no parent; pull into a fresh repository with `grove git import`"
+            )
+        })?;
+        let base = known
+            .get(parent)
+            .cloned()
+            .ok_or_else(|| anyhow!("commit {sha}'s parent isn't known to Grove"))?;
+        let work = tree_at(&mirror.dir, &sha)?;
+        let main = repo.main()?;
+        let evidence = vec![Evidence {
+            check: "pulled from git".into(),
+            ok: true,
+            detail: sha.clone(),
+        }];
+        if base == main {
+            if let Some(lh) =
+                repo.commit_tree(&work, &Actor::person(&author), &subject, at, evidence)?
+            {
+                // the landing *is* this commit when the trees match
+                if mirror.tree_of(&repo.view_at(&lh)?, lh.as_str())?
+                    == mirror.commit_tree_of(&sha)?
+                {
+                    mirror.map.insert(lh.clone(), sha.clone());
+                } else {
+                    mirror.merges.insert(lh.clone(), sha.clone());
+                }
+                known.insert(sha.clone(), lh);
+            }
+            pulled.fast_forward += 1;
+            continue;
+        }
+        let base_view = repo.view_at(&base)?;
+        let ops = diff(&repo.store, &base_view, &work);
+        if ops.is_empty() {
+            continue;
+        }
+        let mut after = base_view.clone();
+        let touched = after
+            .apply(&repo.store, &ops, &[])
+            .map_err(|e| anyhow!(e))?;
+        let change = Change {
+            id: fresh_id("c_", &sha),
+            version: 1,
+            base,
+            actor: Actor::person(&author),
+            intent: subject.clone(),
+            footprint: footprint(&base_view, &after, &ops, &touched),
+            ops,
+            created: at,
+            previous: None,
+        };
+        repo.stage(&change, actor)?;
+        match repo.land_on(None, DEFAULT_WORKSPACE, Some(&change.id), actor)? {
+            LandOutcome::Landed { landing, .. } => {
+                mirror.merges.insert(landing.clone(), sha.clone());
+                known.insert(sha.clone(), landing);
+                pulled.replayed += 1;
+            }
+            LandOutcome::Conflict { id, .. } => {
+                pulled.conflict = Some((sha, id));
+                break;
+            }
+            LandOutcome::Rejected { .. } => {
+                pulled.conflict = Some((sha, "a check failed".into()));
+                break;
+            }
+        }
+    }
+    mirror.save()?;
+    Ok(pulled)
 }
 
 /// Create a Grove repository at `dest` from a git repository's first-parent
 /// history: one landed change per commit, keeping each commit's author, date
-/// and subject.
+/// and subject. Commits whose trees Grove reproduces exactly keep their ids
+/// when exported again.
 pub fn import(
     source: &Path,
     dest: &Path,
@@ -270,32 +502,58 @@ pub fn import(
     }
     std::fs::create_dir_all(dest)?;
     let repo = Repo::init(dest, importer, vec![])?;
+    let mut mirror = GitMirror::open(&repo)?;
+    let source_git = git(&["rev-parse", "--absolute-git-dir"], Some(&source), &[])?
+        .trim()
+        .to_string();
+    git(
+        &[
+            &mirror.gd(),
+            "fetch",
+            "--quiet",
+            &source_git,
+            "+HEAD:refs/imported/head",
+        ],
+        None,
+        &[],
+    )?;
     let mut count = 0;
     for (sha, author, at, subject) in &commits {
-        let work = tree_at(&source, sha)?;
+        let work = tree_at(&mirror.dir, sha)?;
         let evidence = vec![Evidence {
             check: "imported from git".into(),
             ok: true,
             detail: sha.clone(),
         }];
-        if repo
-            .commit_tree(&work, &Actor::person(author), subject, *at, evidence)?
-            .is_some()
-        {
+        if let Some(lh) = repo.commit_tree(&work, &Actor::person(author), subject, *at, evidence)? {
             count += 1;
+            // keep the original id when Grove reproduces the tree exactly,
+            // and when its parent kept its id too
+            let parent_kept = match repo.landing(&lh)?.parent {
+                Some(p) => {
+                    mirror.map.contains_key(&p)
+                        || (repo.landing(&p)?.parent.is_none()
+                            && repo.view_at(&p)?.decls.is_empty())
+                }
+                None => true,
+            };
+            if parent_kept
+                && mirror.tree_of(&repo.view_at(&lh)?, lh.as_str())?
+                    == mirror.commit_tree_of(sha)?
+            {
+                mirror.map.insert(lh, sha.clone());
+            }
         }
     }
+    mirror.save()?;
     repo.reset_workspace(DEFAULT_WORKSPACE, importer)?;
     Ok((repo, count))
 }
 
-/// A commit's files, read straight from git's object database.
-fn tree_at(repo: &Path, sha: &str) -> Result<Work> {
-    let listing = git(
-        &["ls-tree", "-r", "-z", "--full-tree", sha],
-        Some(repo),
-        &[],
-    )?;
+/// A commit's files, read from a git object database.
+fn tree_at(git_dir: &Path, sha: &str) -> Result<Work> {
+    let gd = format!("--git-dir={}", git_dir.display());
+    let listing = git(&[&gd, "ls-tree", "-r", "-z", "--full-tree", sha], None, &[])?;
     let mut entries = vec![];
     for rec in listing.split('\0').filter(|r| !r.is_empty()) {
         let (meta, path) = rec
@@ -308,8 +566,7 @@ fn tree_at(repo: &Path, sha: &str) -> Result<Work> {
         }
     }
     let mut child = Command::new("git")
-        .args(["cat-file", "--batch"])
-        .current_dir(repo)
+        .args([gd.as_str(), "cat-file", "--batch"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()?;
@@ -337,14 +594,12 @@ fn tree_at(repo: &Path, sha: &str) -> Result<Work> {
             .ok_or_else(|| anyhow!("bad cat-file header {header}"))?;
         let body = &bytes[nl + 1..nl + 1 + size];
         pos = nl + 1 + size + 1;
-        if body.contains(&0) || ignored_path(path) {
+        if ignored_path(path) {
             continue;
         }
-        if let Ok(text) = std::str::from_utf8(body) {
-            let items = split(path, text);
-            if !items.is_empty() {
-                work.insert(path.clone(), items);
-            }
+        let items = split_bytes(path, body);
+        if !items.is_empty() {
+            work.insert(path.clone(), items);
         }
     }
     Ok(work)

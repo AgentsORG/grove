@@ -11,7 +11,6 @@ use crate::workdir::materialize;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use std::process::Command;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CheckSpec {
@@ -70,17 +69,7 @@ fn graph_detail(view: &View) -> String {
 }
 
 fn shell(cmd: &str, dir: &Path) -> std::io::Result<std::process::Output> {
-    if cfg!(windows) {
-        Command::new("cmd")
-            .args(["/C", cmd])
-            .current_dir(dir)
-            .output()
-    } else {
-        Command::new("sh")
-            .args(["-c", cmd])
-            .current_dir(dir)
-            .output()
-    }
+    crate::shell::run(cmd, dir)
 }
 
 fn tail(text: &str, lines: usize) -> String {

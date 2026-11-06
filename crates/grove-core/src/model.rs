@@ -28,6 +28,8 @@ pub enum DeclKind {
     Type,
     /// A whole file that is not Zero code (docs, config, other languages).
     File,
+    /// A binary file (an image, a font, an archive), stored as base64.
+    Binary,
     /// Anything else at the top level of a Zero file.
     Other,
 }
@@ -199,6 +201,10 @@ pub struct Change {
     pub ops: Vec<Op>,
     pub footprint: Footprint,
     pub created: u64,
+    /// The version this one replaced, so every version of a change can be
+    /// compared (`grove evolve`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous: Option<Hash>,
 }
 
 /// One check's result, kept with the landing it judged.

@@ -20,11 +20,14 @@ pub mod diff;
 pub mod git;
 pub mod graph;
 pub mod hash;
+pub mod history;
 pub mod model;
 pub mod remote;
 pub mod repo;
+pub mod shell;
 pub mod source;
 pub mod store;
+pub mod textdiff;
 pub mod workdir;
 
 pub use check::CheckSpec;

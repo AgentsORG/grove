@@ -2,7 +2,7 @@
 
 use crate::diff::Work;
 use crate::graph::View;
-use crate::source::split;
+use crate::source::split_bytes;
 use anyhow::Result;
 use std::collections::BTreeSet;
 use std::fs;
@@ -85,14 +85,7 @@ fn walk(root: &Path, dir: &Path, ignore: &Ignore, work: &mut Work) -> Result<()>
             walk(root, &path, ignore, work)?;
         } else if ft.is_file() {
             let bytes = fs::read(&path)?;
-            // Phase 1 tracks text. Binary files need chunked storage and locks.
-            if bytes.contains(&0) {
-                continue;
-            }
-            let Ok(text) = String::from_utf8(bytes) else {
-                continue;
-            };
-            let items = split(&rel, &text);
+            let items = split_bytes(&rel, &bytes);
             if !items.is_empty() {
                 work.insert(rel, items);
             }
@@ -104,7 +97,7 @@ fn walk(root: &Path, dir: &Path, ignore: &Ignore, work: &mut Work) -> Result<()>
 /// Write a view into a directory. Files the view no longer has, but which
 /// `previous` had, are removed; untracked files are left alone.
 pub fn materialize(root: &Path, view: &View, previous: Option<&View>) -> Result<()> {
-    let files = view.files();
+    let files = view.file_bytes();
     if let Some(prev) = previous {
         let now: BTreeSet<&String> = files.keys().collect();
         for old in prev.files().keys() {
@@ -116,13 +109,13 @@ pub fn materialize(root: &Path, view: &View, previous: Option<&View>) -> Result<
             }
         }
     }
-    for (rel, text) in files {
+    for (rel, bytes) in files {
         let p = root.join(&rel);
         if let Some(parent) = p.parent() {
             fs::create_dir_all(parent)?;
         }
-        if fs::read_to_string(&p).ok().as_deref() != Some(text.as_str()) {
-            fs::write(&p, text)?;
+        if fs::read(&p).ok().as_deref() != Some(bytes.as_slice()) {
+            fs::write(&p, bytes)?;
         }
     }
     Ok(())

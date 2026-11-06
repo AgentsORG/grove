@@ -42,6 +42,36 @@ pub struct Refs {
     /// to it (like git's `origin/main`).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub remotes: BTreeMap<String, Hash>,
+    /// Named landings: releases.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub tags: BTreeMap<String, Hash>,
+    /// Named lines of work beside main (git's branches).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub lanes: BTreeMap<String, Hash>,
+    /// Edits put aside (git's stash), by name.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub shelves: BTreeMap<String, Hash>,
+}
+
+/// The head a workspace lands on: its lane's, or main's.
+pub fn head(refs: &Refs, lane: Option<&str>) -> Result<Hash> {
+    match lane {
+        Some(l) => refs
+            .lanes
+            .get(l)
+            .cloned()
+            .ok_or_else(|| anyhow!("no lane named {l}")),
+        None => refs.main.clone().ok_or_else(|| anyhow!("main is empty")),
+    }
+}
+
+pub fn set_head(refs: &mut Refs, lane: Option<&str>, h: Hash) {
+    match lane {
+        Some(l) => {
+            refs.lanes.insert(l.to_string(), h);
+        }
+        None => refs.main = Some(h),
+    }
 }
 
 /// A working copy: a folder, the landing it was last synced to, the actor
@@ -54,6 +84,9 @@ pub struct Workspace {
     pub actor: Option<Actor>,
     #[serde(default)]
     pub draft: Option<ChangeId>,
+    /// The lane this workspace works on; none means main.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lane: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -163,6 +196,7 @@ impl Repo {
                 base: lh,
                 actor: Some(actor.clone()),
                 draft: None,
+                lane: None,
             },
         );
         repo.write_refs(&refs)?;
@@ -370,17 +404,7 @@ impl Repo {
     }
 
     fn renames(changes: &[Change]) -> Vec<LandedRename> {
-        changes
-            .iter()
-            .flat_map(|c| &c.ops)
-            .filter_map(|op| match op {
-                Op::Rename { from, to, .. } => Some(LandedRename {
-                    from: from.clone(),
-                    to: to.clone(),
-                }),
-                _ => None,
-            })
-            .collect()
+        renames_of(changes)
     }
 
     // ------------------------------------------------------------- commands
@@ -417,6 +441,7 @@ impl Repo {
                 ops,
                 footprint,
                 created: at,
+                previous: None,
             };
             let ch = self.store.put_json("change", &change)?;
             let snapshot = self.store.put_json("snapshot", &after.save(&self.store)?)?;
@@ -472,13 +497,13 @@ impl Repo {
                 .map_err(|e| anyhow!(e))?;
             let footprint = footprint(&base, &after, &ops, &touched);
 
-            let (id, version) = match w
+            let (id, version, previous) = match w
                 .draft
                 .as_ref()
                 .and_then(|d| refs.drafts.get(d).map(|h| (d, h)))
             {
-                Some((d, h)) => (d.clone(), self.change(h)?.version + 1),
-                None => (fresh_id("c_", intent), 1),
+                Some((d, h)) => (d.clone(), self.change(h)?.version + 1, Some(h.clone())),
+                None => (fresh_id("c_", intent), 1, None),
             };
             let change = Change {
                 id: id.clone(),
@@ -489,6 +514,7 @@ impl Repo {
                 ops,
                 footprint,
                 created: now(),
+                previous,
             };
             let h = self.store.put_json("change", &change)?;
             refs.drafts.insert(id.clone(), h);
@@ -502,6 +528,18 @@ impl Repo {
     /// order it after anything it depends on, check the combined result, and
     /// move main only if every check passes.
     pub fn land(&self, ws: &str, change_id: Option<&str>, actor: &Actor) -> Result<LandOutcome> {
+        let lane = self.refs()?.workspaces.get(ws).and_then(|w| w.lane.clone());
+        self.land_on(lane.as_deref(), ws, change_id, actor)
+    }
+
+    /// Land a draft on a lane (`Some`) or on main (`None`).
+    pub fn land_on(
+        &self,
+        lane: Option<&str>,
+        ws: &str,
+        change_id: Option<&str>,
+        actor: &Actor,
+    ) -> Result<LandOutcome> {
         let config = self.config()?;
         self.transact("land", &actor.to_string(), |refs| {
             let id = match change_id {
@@ -515,7 +553,7 @@ impl Repo {
                     .get(&id)
                     .ok_or_else(|| anyhow!("no draft {}", short(&id)))?,
             )?;
-            let main = refs.main.clone().ok_or_else(|| anyhow!("main is empty"))?;
+            let main = head(refs, lane)?;
             let since = self.landed_since(&main, &change.base)?;
             let renames = Self::renames(&since);
             let base_view = self.view_at(&change.base)?;
@@ -541,6 +579,21 @@ impl Repo {
                     }
                 }
             }
+            // Both sides changed the same declaration on different lines:
+            // merge inside it, the way a person would.
+            let mut merged: BTreeMap<DeclId, String> = BTreeMap::new();
+            for d in clash.clone() {
+                if let (Some(b), Some(m), Some(y)) = (
+                    base_view.decls.get(&d),
+                    main_view.decls.get(&d),
+                    mine.decls.get(&d),
+                ) {
+                    if let Some(text) = crate::textdiff::merge3(&b.source, &m.source, &y.source) {
+                        merged.insert(d.clone(), text);
+                        clash.remove(&d);
+                    }
+                }
+            }
             let identical: BTreeSet<DeclId> = since
                 .iter()
                 .flat_map(|l| {
@@ -558,7 +611,7 @@ impl Repo {
             let ops: Vec<Op> = change
                 .ops
                 .iter()
-                .filter(|op| !identical.contains(op.target()))
+                .filter(|op| !identical.contains(op.target()) && !merged.contains_key(op.target()))
                 .cloned()
                 .collect();
             let applied = if clash.is_empty() {
@@ -567,7 +620,19 @@ impl Repo {
                 Err(ApplyError::Missing { id: String::new() })
             };
             let touched = match applied {
-                Ok(t) => t,
+                Ok(mut t) => {
+                    for (d, text) in &merged {
+                        if let Some(n) = view.decls.get_mut(d) {
+                            if n.is_code() {
+                                n.entry.name = crate::source::classify(text).0;
+                            }
+                            n.entry.content = crate::hash::decl_hash(text);
+                            n.source = text.clone();
+                            t.insert(d.clone());
+                        }
+                    }
+                    t
+                }
                 Err(err) => {
                     if clash.is_empty() {
                         // a stale op the footprints did not predict
@@ -642,7 +707,19 @@ impl Repo {
                 LandMode::Direct
             };
 
-            let evidence = run_checks(&view, &config.checks)?;
+            let mut evidence = run_checks(&view, &config.checks)?;
+            if !merged.is_empty() {
+                let names: Vec<String> = merged
+                    .keys()
+                    .filter_map(|d| view.decls.get(d))
+                    .map(|n| n.entry.name.clone())
+                    .collect();
+                evidence.push(Evidence {
+                    check: "grove: merged inside".into(),
+                    ok: true,
+                    detail: names.join(", "),
+                });
+            }
             if evidence.iter().any(|e| !e.ok) {
                 return Ok((LandOutcome::Rejected { change, evidence }, String::new()));
             }
@@ -657,7 +734,7 @@ impl Repo {
                 at: now(),
             };
             let lh = self.store.put_json("landing", &landing)?;
-            refs.main = Some(lh.clone());
+            set_head(refs, lane, lh.clone());
             refs.drafts.remove(&id);
 
             // Workspaces whose only edits were this change move to the new
@@ -702,7 +779,7 @@ impl Repo {
     pub fn sync(&self, ws: &str, actor: &Actor) -> Result<String> {
         self.transact("sync", &actor.to_string(), |refs| {
             let w = self.workspace(refs, ws)?;
-            let main = refs.main.clone().ok_or_else(|| anyhow!("main is empty"))?;
+            let main = head(refs, w.lane.as_deref())?;
             if w.base == main {
                 return Ok(("already up to date".to_string(), String::new()));
             }
@@ -782,6 +859,7 @@ impl Repo {
                     base: main,
                     actor: Some(actor.clone()),
                     draft: None,
+                    lane: None,
                 },
             );
             Ok((path.clone(), format!("added workspace {name} for {actor}")))
@@ -997,4 +1075,19 @@ impl Drop for Lock {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.path);
     }
+}
+
+/// Renames in a list of landed changes, oldest first.
+pub fn renames_of(changes: &[Change]) -> Vec<LandedRename> {
+    changes
+        .iter()
+        .flat_map(|c| &c.ops)
+        .filter_map(|op| match op {
+            Op::Rename { from, to, .. } => Some(LandedRename {
+                from: from.clone(),
+                to: to.clone(),
+            }),
+            _ => None,
+        })
+        .collect()
 }

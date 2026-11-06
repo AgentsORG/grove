@@ -18,15 +18,44 @@ pub fn is_zero_file(path: &str) -> bool {
     path.ends_with(".0")
 }
 
+/// Split one file's bytes into declarations. Text goes through [`split`];
+/// anything with a NUL byte or invalid UTF-8 is one `Binary` declaration
+/// holding the bytes as base64, so it is stored, addressed, synced and
+/// exported like everything else.
+pub fn split_bytes(path: &str, bytes: &[u8]) -> Vec<Item> {
+    match std::str::from_utf8(bytes) {
+        Ok(text) if !bytes.contains(&0) => split(path, text),
+        _ => vec![Item {
+            name: path.to_string(),
+            kind: DeclKind::Binary,
+            source: encode_binary(bytes),
+        }],
+    }
+}
+
+/// A binary file's canonical text: base64, one final newline.
+pub fn encode_binary(bytes: &[u8]) -> String {
+    use base64::Engine;
+    let mut s = base64::engine::general_purpose::STANDARD.encode(bytes);
+    s.push('\n');
+    s
+}
+
+pub fn decode_binary(source: &str) -> Vec<u8> {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD
+        .decode(source.trim_end())
+        .unwrap_or_default()
+}
+
 /// Split one file into declarations.
 pub fn split(path: &str, text: &str) -> Vec<Item> {
     if is_zero_file(path) {
         split_zero(text)
     } else {
-        let mut source = text.replace("\r\n", "\n");
-        if !source.is_empty() && !source.ends_with('\n') {
-            source.push('\n');
-        }
+        // Files that aren't Zero code are kept byte for byte: a version
+        // control system never rewrites your files.
+        let source = text.to_string();
         vec![Item {
             name: path.to_string(),
             kind: DeclKind::File,

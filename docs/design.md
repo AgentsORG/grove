@@ -55,6 +55,16 @@ Every command that changes refs appends an entry to `.grove/oplog.jsonl` with th
 
 `grove git export` writes `.grove/git`, a bare git repository with one commit per landing. Authors are the actors; trailers carry the change id, mode, agent, the person it was for, and evidence. Git's `main` always matches Grove's main, including after an undo. `grove git import` reads a git repository's first-parent history through git's own plumbing and lands one change per commit, keeping author, date and subject.
 
+## Remotes
+
+`grove_core::remote` is the protocol between repositories. It moves **objects** and **proposals**:
+
+- **fetch** sends every object reachable from the remote's main that the receiver lacks. The receiver re-hashes each one against its domain and address, so a remote can't hand over a forged object.
+- **push** fast-forwards the remote's main to history landed locally. A main that moved on both sides is refused, never overwritten.
+- **propose** sends one change. The remote lands it with the same `Repo::land` (replay, order, check), or keeps it open for review. When it lands, the client fast-forwards and moves the workspace that held it.
+
+Transports: a folder (`Folder`) in grove-core, HTTP in the CLI. A server hosts bare repositories (`Repo::init_bare`) whose first landing arrives by push.
+
 ## Phases
 
 1. **One machine** (this release): graph store, stable ids, SHA-256, footprints, land, sync, why, undo, the git bridge.
@@ -66,5 +76,5 @@ Every command that changes refs appends an entry to `.grove/oplog.jsonl` with th
 - Text files only; binary files are skipped (see the parity list).
 - Edges in Zero code come from names, not from Zero's resolver yet, so two declarations with the same name in different modules share edges.
 - Two edits to the same declaration always conflict, even on different lines.
-- Workspaces are local folders; there is no server yet.
+- Workspaces are local folders; remotes sync through GroveHub or another folder. When main moved both locally and on the remote, push refuses instead of re-landing local changes on the remote.
 - Checks run while the repository lock is held, so landings are serialized on one machine.
