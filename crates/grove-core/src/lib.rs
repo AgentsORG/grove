@@ -31,6 +31,7 @@ pub mod store;
 pub mod textdiff;
 pub mod trust;
 pub mod workdir;
+pub mod zero;
 
 pub use check::CheckSpec;
 pub use graph::{Edge, EdgeKind, View};

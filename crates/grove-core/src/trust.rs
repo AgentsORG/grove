@@ -113,7 +113,7 @@ pub fn actor_spec(a: &Actor) -> String {
     }
 }
 
-fn grove_home() -> PathBuf {
+pub(crate) fn grove_home() -> PathBuf {
     if let Ok(h) = std::env::var("GROVE_HOME") {
         return PathBuf::from(h);
     }

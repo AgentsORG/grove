@@ -148,10 +148,16 @@ impl View {
     }
 
     pub fn edges(&self) -> Vec<Edge> {
+        // Zero's resolver, when it can answer, gives the exact code edges;
+        // names still give the mentions from docs and other files.
+        let resolved = crate::zero::resolved_edges(self);
         let names = self.names();
-        let mut out = BTreeSet::new();
+        let mut out: BTreeSet<Edge> = resolved.iter().flatten().cloned().collect();
         for (id, n) in &self.decls {
             let code = n.is_code();
+            if code && resolved.is_some() {
+                continue;
+            }
             for r in references(&n.source, code) {
                 if let Some(to) = names.get(&r) {
                     if to != id {

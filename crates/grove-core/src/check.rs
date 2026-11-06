@@ -55,9 +55,10 @@ fn graph_detail(view: &View) -> String {
     let clashes = view.name_clashes();
     if clashes.is_empty() {
         format!(
-            "{} declarations, {} edges",
+            "{} declarations, {} edges (from {})",
             view.decls.len(),
-            view.edges().len()
+            view.edges().len(),
+            crate::zero::edge_source(view)
         )
     } else {
         format!(

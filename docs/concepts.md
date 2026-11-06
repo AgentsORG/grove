@@ -11,7 +11,7 @@ Each declaration has:
 - a **stable id**. It comes from where the declaration lives and what it's called, never from the machine or the clock, so every machine builds the same graph. It survives edits and renames.
 - a **content address**: the SHA-256 of its source.
 
-**Edges** come from references. A call in Zero code is a *code* edge. A name written in backticks in a doc is a *mention* edge: inferred, and weaker. Edges are derived from content whenever they're needed, so they can never disagree with it.
+**Edges** come from references. A call in Zero code is a *code* edge. When the `zero` compiler is installed, Grove asks Zero's own resolver which declaration each reference means, so a parameter that shares a function's name isn't mistaken for a call; without it, Grove matches names. A name written in backticks in a doc is a *mention* edge: inferred, and weaker. Edges are derived from content whenever they're needed, so they can never disagree with it.
 
 Files, git commits and the app are views of this graph.
 

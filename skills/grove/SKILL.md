@@ -59,6 +59,7 @@ Use `--json` on any command for machine-readable output.
 - `grove log`, `grove show <change>`: what landed, how, and why.
 - `grove why <name> [--all]`: who last changed a function or constant, for whom, and why. It follows renames.
 - `grove find <text>`, `grove graph --json`: search main, or read the program graph.
+  With Zero installed (`curl -fsSL https://zerolang.ai/install.sh | bash`), edges come from Zero's resolver (`edgesFrom: "zero"`), so your footprint only reads what you really call.
 - `grove evolve <change>`: every version of a change.
 
 ## Keys and approvals

@@ -614,11 +614,16 @@ fn run() -> Result<()> {
                 println!(
                     "{}",
                     serde_json::to_string_pretty(
-                        &serde_json::json!({"nodes": nodes, "edges": es})
+                        &serde_json::json!({"nodes": nodes, "edges": es, "edgesFrom": grove_core::zero::edge_source(&view)})
                     )?
                 );
             } else {
-                println!("{} declarations, {} edges", view.decls.len(), edges.len());
+                println!(
+                    "{} declarations, {} edges (from {})",
+                    view.decls.len(),
+                    edges.len(),
+                    grove_core::zero::edge_source(&view)
+                );
                 for (id, n) in &view.decls {
                     let out: Vec<_> = edges
                         .iter()

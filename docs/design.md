@@ -73,17 +73,24 @@ When two changes set the same declaration, Grove runs a line-level three-way mer
 
 `revert` builds the inverse ops of a landed change (renames back first, so the rest see the original names) and lands them as a new change. `pick` replays a change's ops from wherever it is, based on the shared history. Lanes are named heads: a workspace on a lane lands there, and `lane land` lands the lane's whole difference from its fork point onto main as one change. Tags name landings. Shelves store unrecorded edits as a change object and replay them later. `bisect` materializes landings in scratch folders and halves the range.
 
+## Exact edges
+
+When the `zero` compiler is installed (on PATH, in `~/.zero/bin`, or named by `GROVE_ZERO`) and the repository is a Zero package (it has a `zero.toml`), Grove asks Zero for the edges instead of guessing from names. It writes the snapshot to a scratch folder, runs `zero import`, `zero query --refs` and `zero dump`, and maps every resolved reference onto a declaration by file and line. References to parameters, locals and fields are dropped; calls and uses of functions, consts and types become edges.
+
+The answer is cached under `~/.grove/cache/edges` by the snapshot's hash, so Zero runs once for each new state of the program, in any repository. A package that doesn't compile is cached as "use names". `grove graph` says which it used (`from zero` or `from names`), and so does the `grove: graph` evidence on every landing. `GROVE_EDGES=names` turns the resolver off.
+
 ## Phases
 
 1. **Today (0.1)**: graph store, stable ids, SHA-256, footprints, land, sync, why, undo, merging inside declarations, binary files, revert, pick, lanes, tags, shelves, bisect, remotes, and the two-way git bridge.
 2. **0.2**: signed changes (ed25519), review rules and approvals, remembered resolutions, notes, presence (`grove who`), pull requests through the git hosts.
 3. **0.3**: partial workspaces (`--only`), signed tags.
-4. **Next**: a merge queue across machines, lazy fetching, the GroveHub app.
-5. **Then**: tree-sitter graphs for other languages (inferred edges), exact edges from Zero's own resolver (cached per snapshot), chunked storage for very large binaries, lazy fetching for partial workspaces.
+4. **Unreleased**: exact edges from Zero's own resolver, cached per snapshot.
+5. **Next**: a merge queue across machines, lazy fetching, the GroveHub app.
+6. **Then**: tree-sitter graphs for other languages (inferred edges), chunked storage for very large binaries, lazy fetching for partial workspaces.
 
 ## Known limits today
 
-- Edges in Zero code come from names, not from Zero's resolver yet, so two declarations with the same name in different modules share edges.
+- Exact edges need the `zero` compiler and a package that compiles. Without them Grove uses names, so a parameter named like a function, or two declarations with the same name in different modules, can add an edge that isn't there. That only ever makes Grove more careful (an extra read orders a landing), never less.
 - Files that aren't Zero code are one declaration each: two edits to different lines of a doc merge, but there are no finer graph edges inside them yet.
 - Binary files are stored whole (base64 in the object store); very large binaries are slower than in git.
 - Partial workspaces hold a subset of paths, but the repository's store is still complete on each machine; fetching objects lazily from a server is next.
